@@ -476,10 +476,10 @@ function AiModelPane({ t }: { t: TFunc }) {
     setSaved(false)
     setTestResult(null)
   }
-  const endpoint = meta?.needsBaseUrl ? activeCustomEndpoint(settings) : undefined
+  const endpoint = provider === 'custom' ? activeCustomEndpoint(settings) : undefined
   /** Patch the active endpoint's declarative profile (protocol, headers, timeouts, switches). */
   const updateEndpointProfile = (patch: Partial<AiCustomEndpoint>) => {
-    if (!endpoint) return
+    if (!endpoint || provider !== 'custom') return
     setSettings(upsertCustomEndpoint(settings, { ...endpoint, ...patch }))
     touch()
   }
@@ -487,7 +487,7 @@ function AiModelPane({ t }: { t: TFunc }) {
   const clearEndpointProfileKey = (
     key: 'compat' | 'modelProfiles' | 'apiKeyEnv' | 'idleTimeoutMs',
   ) => {
-    if (!endpoint) return
+    if (!endpoint || provider !== 'custom') return
     const next = { ...endpoint }
     delete next[key]
     setSettings(upsertCustomEndpoint(settings, next))
@@ -501,7 +501,7 @@ function AiModelPane({ t }: { t: TFunc }) {
     .join('\n')
   const modelsText = JSON.stringify(endpoint?.modelProfiles ?? [], null, 2)
   const updateConfig = (patch: Partial<typeof config>) => {
-    if (meta?.needsBaseUrl) {
+    if (provider === 'custom') {
       // the slot mirrors the active endpoint, so the edit lands on the endpoint
       const base = endpoint ?? {
         id: newCustomEndpointId(),
@@ -513,6 +513,7 @@ function AiModelPane({ t }: { t: TFunc }) {
       const { cliPath: _cli, ...fields } = patch
       setSettings(upsertCustomEndpoint(settings, { ...base, ...fields }, true))
     } else {
+      // Providers like rz-vllm manage their own baseUrl/model directly
       setSettings({
         ...settings,
         providers: { ...settings.providers, [provider]: { ...config, ...patch } },
@@ -660,7 +661,7 @@ function AiModelPane({ t }: { t: TFunc }) {
       <div className="set-field-desc set-ai-note">
         {isGenspark ? t('setAiGensparkHint') : isCodex ? t('setAiCodexHint') : t('setAiByokNote')}
       </div>
-      {meta?.needsBaseUrl && (
+      {provider === 'custom' && meta?.needsBaseUrl && (
         <>
           <div className="set-field">
             <div className="set-field-text">
@@ -692,7 +693,7 @@ function AiModelPane({ t }: { t: TFunc }) {
               )}
             </div>
           </div>
-          {endpoint && (
+          {provider === 'custom' && endpoint && (
             <div className="set-field">
               <div className="set-field-text">
                 <label className="set-field-label" htmlFor="set-ai-endpoint-name">
@@ -809,7 +810,7 @@ function AiModelPane({ t }: { t: TFunc }) {
             />
           </div>
 
-          {endpoint && (
+          {provider === 'custom' && endpoint && (
             <>
               <div className="set-field">
                 <div className="set-field-text">

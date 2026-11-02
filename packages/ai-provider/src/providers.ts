@@ -487,6 +487,16 @@ export const AI_PROVIDERS: AiProviderMeta[] = [
     keyPlaceholder: 'API Key',
     needsBaseUrl: true,
   },
+  {
+    id: 'rz-vllm',
+    label: 'RZ vLLM',
+    // OpenAI-compatible internal gateway; the endpoint is user-supplied and
+    // models are probed live from its /v1/models route.
+    models: [],
+    defaultModel: '',
+    keyPlaceholder: 'API Key',
+    needsBaseUrl: true,
+  },
 ]
 
 /**

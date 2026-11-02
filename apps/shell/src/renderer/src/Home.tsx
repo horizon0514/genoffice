@@ -2352,6 +2352,71 @@ export function Home() {
             <span className="quick-sub">RZ_API_BASE_URL / RZ_API_TOKEN</span>
           </span>
         </button>
+        <button
+          className="quick-card"
+          onClick={() => {
+            const api = window.workspaceApi
+            if (!api) return
+            void api.publish().then((r) => {
+              // eslint-disable-next-line no-alert
+              alert(r.ok ? `Published snapshot: ${r.version}` : `Publish failed: ${r.error ?? 'Unknown error'}`)
+            })
+          }}
+        >
+          <span className="quick-folder">
+            <FolderIcon size={18} />
+          </span>
+          <span className="quick-text">
+            <span className="quick-title-row">
+              <span className="quick-title">Publish snapshot</span>
+            </span>
+            <span className="quick-sub">GENOFFICE_SYNC_BASE_URL [+ Basic Auth]</span>
+          </span>
+        </button>
+        <button
+          className="quick-card"
+          onClick={() => {
+            const api = window.workspaceApi
+            if (!api) return
+            void api.pull().then(async (r) => {
+              if (!r.ok) {
+                // eslint-disable-next-line no-alert
+                alert(`Pull failed: ${r.error ?? 'Unknown error'}`)
+                return
+              }
+              const changed = (r.diff ?? []).filter((d) => d.kind === 'new' || d.kind === 'changed')
+              const summary = `Pulled snapshot ${r.version}.\nChanged/new: ${changed.length}.\nMirror: ${r.mirrorDir}`
+              // eslint-disable-next-line no-alert
+              const input =
+                // eslint-disable-next-line no-alert
+                prompt(
+                  `${summary}\n\nEnter JSON array of relative paths to apply, or leave blank to skip:`,
+                  JSON.stringify(changed.map((d) => d.path), null, 0),
+                )
+              if (input && input.trim()) {
+                try {
+                  const paths = JSON.parse(input) as string[]
+                  const res = await api.apply(paths)
+                  // eslint-disable-next-line no-alert
+                  alert(res.ok ? `Applied ${res.applied} file(s)` : `Apply failed: ${res.error ?? 'Unknown error'}`)
+                } catch {
+                  // eslint-disable-next-line no-alert
+                  alert('Invalid selection input.')
+                }
+              }
+            })
+          }}
+        >
+          <span className="quick-folder">
+            <FolderIcon size={18} />
+          </span>
+          <span className="quick-text">
+            <span className="quick-title-row">
+              <span className="quick-title">Pull snapshot for review</span>
+            </span>
+            <span className="quick-sub">Creates read-only mirror + diff</span>
+          </span>
+        </button>
       </div>
     )
   }

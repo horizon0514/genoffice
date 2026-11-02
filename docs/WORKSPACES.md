@@ -66,14 +66,32 @@ Env vars
 - `RZ_API_BASE_URL` — base URL of rz-system (optional; when missing, fixtures are used)
 - `RZ_API_TOKEN` — bearer token (optional; used only with `RZ_API_BASE_URL`)
 
+P1 — Non‑realtime cloud sync (dufs HTTP)
+---------------------------------------
+
+- Transport: `dufs` static server (`PUT`/`GET`), no WebDAV required. Targets [`sigoden/dufs`](https://github.com/sigoden/dufs).
+- Publish (Push):
+  - Builds a signed/versioned snapshot: manifest + per‑file SHA‑256 hashes.
+  - Uploads `index.json` and content‑addressed blobs to the configured dufs base URL.
+  - Writes a stable pointer `genoffice/<workspace-id>/latest.json` for discovery.
+- Pull (Review):
+  - Fetches the remote `latest.json` and its `index.json`.
+  - Creates a read‑only mirror under `<workspace>/.genoffice/mirror/<workspace-id>/<version>/`.
+  - Computes a diff vs local. Apply requires explicit selection; nothing is overwritten automatically.
+- Conflict policy: local‑first; no deletes on apply.
+- Env:
+  - `GENOFFICE_SYNC_BASE_URL` — dufs base URL (e.g. `http://host:port` or `https://host/subdir`)
+  - `GENOFFICE_SYNC_USER` / `GENOFFICE_SYNC_PASSWORD` — optional Basic Auth for dufs
+- Notes:
+  - Older dufs builds may not enable WebDAV. This implementation only relies on plain HTTP `PUT`/`GET`.
+  - If your server auto‑creates parent directories on `PUT`, nested paths under `genoffice/` will be made on demand. Otherwise, pre‑create the target folder on the server and/or point `GENOFFICE_SYNC_BASE_URL` at an existing subfolder.
+- UI:
+  - Home → Quick cards add “Publish snapshot” and “Pull snapshot for review”.
+  - Pull shows a count of changed/new files and prompts for a JSON list of paths to apply.
+
 Deferred (design notes)
 -----------------------
 
-- P1: Non-realtime cloud sync
-  - Push: publish a signed workspace snapshot (manifest + file hashes + optional redacted previews)
-  - Pull for review: fetch snapshot into a read-only mirror, diff against local; user opts into file-by-file updates
-  - Transport: static object store (S3-compatible), snapshot index JSON, content-addressed blobs
-  - Conflict policy: local-first; snapshot import never overwrites files without explicit user action
 - P2: AI provider for internal gateway `rz-vllm`
   - Adapter under `@genoffice/ai-provider` with an OpenAI-compatible shape
   - Settings:

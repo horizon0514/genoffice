@@ -888,5 +888,40 @@ const workspaceApi: WorkspaceApi = {
       ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
     }
   },
+  async publish() {
+    const r: unknown = await ipcRenderer.invoke(WORKSPACE_CHANNELS.publish)
+    const raw = (r ?? {}) as { ok?: unknown; version?: unknown; error?: unknown }
+    return {
+      ok: raw.ok === true,
+      ...(typeof raw.version === 'string' ? { version: raw.version } : {}),
+      ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+    }
+  },
+  async pull() {
+    const r: unknown = await ipcRenderer.invoke(WORKSPACE_CHANNELS.pull)
+    const raw = (r ?? {}) as {
+      ok?: unknown
+      version?: unknown
+      mirrorDir?: unknown
+      diff?: unknown
+      error?: unknown
+    }
+    return {
+      ok: raw.ok === true,
+      version: typeof raw.version === 'string' ? raw.version : undefined,
+      mirrorDir: typeof raw.mirrorDir === 'string' ? raw.mirrorDir : undefined,
+      diff: Array.isArray(raw.diff) ? (raw.diff as Array<{ kind: any; path: string }>) : [],
+      ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+    }
+  },
+  async apply(paths) {
+    const r: unknown = await ipcRenderer.invoke(WORKSPACE_CHANNELS.apply, paths)
+    const raw = (r ?? {}) as { ok?: unknown; applied?: unknown; error?: unknown }
+    return {
+      ok: raw.ok === true,
+      applied: typeof raw.applied === 'number' ? raw.applied : 0,
+      ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+    }
+  },
 }
 contextBridge.exposeInMainWorld('workspaceApi', workspaceApi)

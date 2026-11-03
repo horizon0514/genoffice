@@ -40,6 +40,8 @@ import type {
 import type { FoundSkill, RecommendedSkill } from '../shared/found-skill'
 import type { TabsApi, TabSummary } from '../shared/tabs-api'
 import { TABS_CHANNELS } from '../shared/tabs-api'
+import type { WorkspaceApi, WorkspaceSummary, ImportOutcome } from '../shared/workspace-api'
+import { WORKSPACE_CHANNELS } from '../shared/workspace-api'
 
 const UI_LANGUAGES: readonly UiLanguage[] = [
   'zh',
@@ -859,3 +861,32 @@ contextBridge.exposeInMainWorld('aiOfficeTabs', tabsApi)
 
 // open documents dragged from the OS anywhere over Home or the tab strip
 installDropOpenBridge()
+
+// ── Workspaces (local folder + manifest) ──
+const workspaceApi: WorkspaceApi = {
+  async get() {
+    const r: unknown = await ipcRenderer.invoke(WORKSPACE_CHANNELS.get)
+    if (r && typeof r === 'object' && typeof (r as WorkspaceSummary).dir === 'string') {
+      return r as WorkspaceSummary
+    }
+    return null
+  },
+  async pick() {
+    const r: unknown = await ipcRenderer.invoke(WORKSPACE_CHANNELS.pick)
+    if (r && typeof r === 'object' && typeof (r as WorkspaceSummary).dir === 'string') {
+      return r as WorkspaceSummary
+    }
+    return null
+  },
+  async importRz() {
+    const r: unknown = await ipcRenderer.invoke(WORKSPACE_CHANNELS.importRz)
+    const raw = (r ?? {}) as Partial<ImportOutcome>
+    return {
+      ok: raw.ok === true,
+      projects: typeof raw.projects === 'number' ? raw.projects : 0,
+      tasks: typeof raw.tasks === 'number' ? raw.tasks : 0,
+      ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+    }
+  },
+}
+contextBridge.exposeInMainWorld('workspaceApi', workspaceApi)

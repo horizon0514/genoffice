@@ -303,6 +303,14 @@ import type {
   FileSearchSettings,
 } from '../shared/home-api'
 import { HOME_CHANNELS } from '../shared/home-api'
+import { WORKSPACE_CHANNELS, type WorkspaceSummary } from '../shared/workspace-api'
+import {
+  initWorkspace as wsInit,
+  loadWorkspace as wsLoad,
+  importRzSystemIntoWorkspace,
+  HttpRzClient,
+  FixtureRzClient,
+} from '@genoffice/workspace-store'
 import {
   normalizeAiPanelPrefs,
   sameAiPanelPrefs,
@@ -5578,6 +5586,80 @@ function registerHomeIpc(): void {
     writeAppSetting(APP_SETTINGS_PATH(), DEFAULT_SAVE_DIR_KEY, picked)
     ensureFolderWatchers()
     return picked
+  })
+
+  // ── Workspaces (local folder + manifest) ─────────────────────────────────────
+  const LAST_WORKSPACE_KEY = 'lastWorkspaceDir'
+  function readLastWorkspaceDir(): string | null {
+    const raw = readAppSettings(APP_SETTINGS_PATH())[LAST_WORKSPACE_KEY]
+    return typeof raw === 'string' && raw.trim() ? raw : null
+  }
+  function writeLastWorkspaceDir(dir: string): void {
+    writeAppSetting(APP_SETTINGS_PATH(), LAST_WORKSPACE_KEY, dir)
+  }
+  function summarizeWorkspace(dir: string): WorkspaceSummary | null {
+    try {
+      const m = wsLoad(dir)
+      if (!m) return null
+      return {
+        dir,
+        name: m.name,
+        createdAt: m.createdAt,
+        updatedAt: m.updatedAt,
+        projects: m.projects.map((p) => ({
+          id: p.id,
+          name: p.name,
+          fileCount: p.files.length,
+        })),
+      }
+    } catch {
+      return null
+    }
+  }
+  ipcMain.handle(WORKSPACE_CHANNELS.get, () => {
+    const dir = readLastWorkspaceDir()
+    return dir ? summarizeWorkspace(dir) : null
+  })
+  ipcMain.handle(WORKSPACE_CHANNELS.pick, async (): Promise<WorkspaceSummary | null> => {
+    const result = await showOpenDialogWithMemory(dialog, shellWindow, {
+      title: 'Open or Create Workspace',
+      properties: ['openDirectory', 'createDirectory'],
+    })
+    const picked = result.filePaths[0]
+    if (result.canceled || !picked) return null
+    // initialize manifest when missing
+    wsInit(picked)
+    writeLastWorkspaceDir(picked)
+    // auto-add the picked folder into the sidebar roots (idempotent)
+    const extras = withExtraRoot(extraFolderRoots(), defaultSaveDir(), picked)
+    if (extras) {
+      writeAppSetting(APP_SETTINGS_PATH(), FOLDER_ROOTS_KEY, extras)
+      ensureFolderWatchers()
+      fileIndexer?.refresh()
+    }
+    return summarizeWorkspace(picked)
+  })
+  ipcMain.handle(WORKSPACE_CHANNELS.importRz, async (): Promise<{
+    ok: boolean
+    projects: number
+    tasks: number
+    error?: string
+  }> => {
+    const dir = readLastWorkspaceDir()
+    if (!dir) return { ok: false, projects: 0, tasks: 0, error: 'No workspace selected' }
+    try {
+      // prefer env-provided HTTP client, else fall back to bundled fixtures
+      const base = process.env.RZ_API_BASE_URL
+      const token = process.env.RZ_API_TOKEN
+      const client =
+        typeof base === 'string' && base && typeof token === 'string' && token
+          ? new HttpRzClient(base, token)
+          : new FixtureRzClient(resolve(__dirname, '../../..', 'packages/workspace-store/fixtures/rz'))
+      const res = await importRzSystemIntoWorkspace({ workspaceDir: dir, client })
+      return { ok: true, projects: res.projects, tasks: res.tasks }
+    } catch (err) {
+      return { ok: false, projects: 0, tasks: 0, error: err instanceof Error ? err.message : String(err) }
+    }
   })
 
   ipcMain.handle(HOME_CHANNELS.openGenTeam, () => {

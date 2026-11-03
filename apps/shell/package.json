@@ -33,6 +33,7 @@
     "@genoffice/pptx-render": "*",
     "@genoffice/sheets": "*",
     "@genoffice/slides": "*",
+    "@genoffice/workspace-store": "*",
     "@genoffice/project-store": "*",
     "@genoffice/ui": "*",
     "@genoffice/xlsx-gateway": "*",

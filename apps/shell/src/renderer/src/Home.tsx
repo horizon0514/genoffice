@@ -34,6 +34,7 @@ import { skillUpdateDue } from './IntegrationsPane'
 import { onFilesChanged } from './file-events'
 
 import type { ProjectApi } from '@genoffice/project-store'
+import type { WorkspaceApi } from '../../shared/workspace-api'
 
 declare global {
   interface Window {
@@ -41,6 +42,8 @@ declare global {
     aiOfficeIntegrations?: IntegrationsApi
     /** Optional: a build without the project bridge keeps the panel in memory. */
     projectApi?: ProjectApi
+    /** Workspace bridge (optional in upstream; present in this fork) */
+    workspaceApi?: WorkspaceApi
   }
 }
 
@@ -2301,6 +2304,52 @@ export function Home() {
               <span className="quick-title">{t('openLocal')}</span>
             </span>
             <span className="quick-sub">{OPEN_LOCAL_EXTENSIONS}</span>
+          </span>
+        </button>
+        <button
+          className="quick-card"
+          onClick={() => {
+            if (!window.workspaceApi) return
+            void window.workspaceApi.pick().then((ws) => {
+              if (ws) {
+                // eslint-disable-next-line no-alert
+                alert(`Workspace ready: ${ws.name}`)
+              }
+            })
+          }}
+        >
+          <span className="quick-folder">
+            <FolderIcon size={18} />
+          </span>
+          <span className="quick-text">
+            <span className="quick-title-row">
+              <span className="quick-title">Open/Create Workspace</span>
+            </span>
+            <span className="quick-sub">Local folder + manifest</span>
+          </span>
+        </button>
+        <button
+          className="quick-card"
+          onClick={() => {
+            if (!window.workspaceApi) return
+            void window.workspaceApi.importRz().then((r) => {
+              // eslint-disable-next-line no-alert
+              alert(
+                r.ok
+                  ? `Imported ${r.projects} rz-project(s) (${r.tasks} task(s))`
+                  : `Import failed: ${r.error ?? 'Unknown error'}`,
+              )
+            })
+          }}
+        >
+          <span className="quick-folder">
+            <FolderIcon size={18} />
+          </span>
+          <span className="quick-text">
+            <span className="quick-title-row">
+              <span className="quick-title">Import from rz-system</span>
+            </span>
+            <span className="quick-sub">RZ_API_BASE_URL / RZ_API_TOKEN</span>
           </span>
         </button>
       </div>

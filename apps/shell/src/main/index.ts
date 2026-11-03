@@ -312,6 +312,11 @@ import {
   FixtureRzClient,
 } from '@genoffice/workspace-store'
 import {
+  publishSnapshotToDufs,
+  pullLatestSnapshotFromDufs,
+  applySelectedFromMirror,
+} from '@genoffice/workspace-store'
+import {
   normalizeAiPanelPrefs,
   sameAiPanelPrefs,
   type AiPanelPrefs,
@@ -5659,6 +5664,82 @@ function registerHomeIpc(): void {
       return { ok: true, projects: res.projects, tasks: res.tasks }
     } catch (err) {
       return { ok: false, projects: 0, tasks: 0, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle(WORKSPACE_CHANNELS.publish, async (): Promise<{
+    ok: boolean
+    version?: string
+    error?: string
+  }> => {
+    const dir = readLastWorkspaceDir()
+    if (!dir) return { ok: false, error: 'No workspace selected' }
+    const baseUrl = process.env.GENOFFICE_SYNC_BASE_URL
+    if (typeof baseUrl !== 'string' || !baseUrl.trim())
+      return { ok: false, error: 'GENOFFICE_SYNC_BASE_URL is not set' }
+    try {
+      const auth =
+        typeof process.env.GENOFFICE_SYNC_USER === 'string' && process.env.GENOFFICE_SYNC_USER
+          ? {
+              user: process.env.GENOFFICE_SYNC_USER,
+              password: process.env.GENOFFICE_SYNC_PASSWORD ?? '',
+            }
+          : undefined
+      const res = await publishSnapshotToDufs({ workspaceDir: dir, baseUrl, auth })
+      return res
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle(WORKSPACE_CHANNELS.pull, async (): Promise<{
+    ok: boolean
+    version?: string
+    mirrorDir?: string
+    diff?: Array<{ kind: 'new' | 'changed' | 'unchanged' | 'deleted'; path: string }>
+    error?: string
+  }> => {
+    const dir = readLastWorkspaceDir()
+    if (!dir) return { ok: false, error: 'No workspace selected' }
+    const baseUrl = process.env.GENOFFICE_SYNC_BASE_URL
+    if (typeof baseUrl !== 'string' || !baseUrl.trim())
+      return { ok: false, error: 'GENOFFICE_SYNC_BASE_URL is not set' }
+    try {
+      const auth =
+        typeof process.env.GENOFFICE_SYNC_USER === 'string' && process.env.GENOFFICE_SYNC_USER
+          ? {
+              user: process.env.GENOFFICE_SYNC_USER,
+              password: process.env.GENOFFICE_SYNC_PASSWORD ?? '',
+            }
+          : undefined
+      const res = await pullLatestSnapshotFromDufs({ workspaceDir: dir, baseUrl, auth })
+      // keep only minimal diff shape for the renderer
+      return {
+        ok: res.ok,
+        version: res.version,
+        mirrorDir: res.mirrorDir,
+        diff: (res.diff ?? []).map((d) => ({ kind: d.kind, path: d.path })),
+        ...(res.error ? { error: res.error } : {}),
+      }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle(WORKSPACE_CHANNELS.apply, async (_event, paths: unknown): Promise<{
+    ok: boolean
+    applied: number
+    error?: string
+  }> => {
+    const dir = readLastWorkspaceDir()
+    if (!dir) return { ok: false, applied: 0, error: 'No workspace selected' }
+    const list = Array.isArray(paths) ? (paths.filter((p) => typeof p === 'string') as string[]) : []
+    if (list.length === 0) return { ok: false, applied: 0, error: 'No files selected' }
+    try {
+      const res = await applySelectedFromMirror({ workspaceDir: dir, paths: list })
+      return res
+    } catch (err) {
+      return { ok: false, applied: 0, error: err instanceof Error ? err.message : String(err) }
     }
   })
 

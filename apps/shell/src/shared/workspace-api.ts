@@ -20,6 +20,9 @@ export const WORKSPACE_CHANNELS = {
   get: 'workspace:get',
   pick: 'workspace:pick',
   importRz: 'workspace:import-rz',
+  publish: 'workspace:publish',
+  pull: 'workspace:pull',
+  apply: 'workspace:apply',
 } as const
 
 export interface WorkspaceApi {
@@ -29,4 +32,16 @@ export interface WorkspaceApi {
   pick(): Promise<WorkspaceSummary | null>
   /** import rz-system projects into the current or picked workspace */
   importRz(): Promise<ImportOutcome>
+  /** publish a snapshot to the configured dufs base URL */
+  publish(): Promise<{ ok: boolean; version?: string; error?: string }>
+  /** pull latest snapshot into a read-only mirror; returns diff */
+  pull(): Promise<{
+    ok: boolean
+    version?: string
+    mirrorDir?: string
+    diff?: Array<{ kind: 'new' | 'changed' | 'unchanged' | 'deleted'; path: string }>
+    error?: string
+  }>
+  /** apply selected files (relative paths) from the last mirror to the workspace */
+  apply(paths: string[]): Promise<{ ok: boolean; applied: number; error?: string }>
 }

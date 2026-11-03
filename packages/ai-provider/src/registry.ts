@@ -332,6 +332,14 @@ export const AI_PROVIDER_ADAPTERS: Record<AiProviderId, ProviderAdapter> = {
       anthropic: /^(minimax-|qwen3\.8-flash$)/,
     }),
   },
+  'rz-vllm': {
+    meta: metaOf('rz-vllm'),
+    capabilities: { auth: 'api-key', vision: true },
+    resolveEndpoint(config) {
+      if (!config.baseUrl) throw new Error('A rz-vllm provider requires a Base URL')
+      return { protocol: 'openai-compatible', baseUrl: normalizeBaseUrl(config.baseUrl, config.baseUrl) }
+    },
+  },
   custom: {
     meta: metaOf('custom'),
     capabilities: { auth: 'api-key', vision: true },

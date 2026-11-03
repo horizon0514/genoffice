@@ -640,15 +640,38 @@ const homeApi: HomeApi = {
     })) as CodexModelCatalog
   },
   async testAiSettings(settings) {
-    const result: unknown = await ipcRenderer.invoke('ai:chat', {
-      settings,
-      system: 'You are a connectivity test. Reply with the single word OK.',
-      user: 'ping',
-    })
-    const raw = (result ?? {}) as { ok?: unknown; error?: unknown }
-    return raw.ok === true
-      ? { ok: true }
-      : { ok: false, error: typeof raw.error === 'string' ? raw.error : 'Connection failed' }
+    // For providers backed by a user-hosted endpoint (needsBaseUrl), prefer a lightweight
+    // connectivity check via the /models probe; fall back to a one-shot chat for others.
+    try {
+      const provider = settings.provider
+      const meta = AI_PROVIDERS.find((m) => m.id === provider)
+      if (meta?.needsBaseUrl) {
+        const cfg = settings.providers?.[provider]
+        const baseUrl = (cfg?.baseUrl ?? '').trim()
+        if (!baseUrl) return { ok: false, error: 'Base URL is required' }
+        const api = cfg?.profile?.api
+        const catalog = (await ipcRenderer.invoke('ai:custom-models', {
+          baseUrl,
+          apiKey: cfg?.apiKey ?? '',
+          ...(api ? { api } : {}),
+        })) as CodexModelCatalog
+        // Treat "any JSON list returned" as success; an empty list likely means probe failed
+        return catalog.models.length > 0
+          ? { ok: true }
+          : { ok: false, error: 'No models found or connection failed' }
+      }
+      const result: unknown = await ipcRenderer.invoke('ai:chat', {
+        settings,
+        system: 'You are a connectivity test. Reply with the single word OK.',
+        user: 'ping',
+      })
+      const raw = (result ?? {}) as { ok?: unknown; error?: unknown }
+      return raw.ok === true
+        ? { ok: true }
+        : { ok: false, error: typeof raw.error === 'string' ? raw.error : 'Connection failed' }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'Connection failed' }
+    }
   },
   getAiMediaProviders() {
     return AI_MEDIA_PROVIDERS

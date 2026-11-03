@@ -92,13 +92,18 @@ P1 — Non‑realtime cloud sync (dufs HTTP)
 Deferred (design notes)
 -----------------------
 
-- P2: AI provider for internal gateway `rz-vllm`
-  - Adapter under `@genoffice/ai-provider` with an OpenAI-compatible shape
-  - Settings:
-    - `rz-vllm` endpoint field (base URL)
-    - Model id textbox
-    - API key (optional if gateway is on a trusted network)
-  - Keep third-party BYO keys side-by-side; no change to existing providers
+P2 — AI provider for internal gateway rz‑vllm (implemented)
+----------------------------------------------------------
+
+- Provider: `RZ vLLM` under Settings → AI Model.
+- Protocol: OpenAI-compatible; works with vLLM and compatible gateways.
+- Settings:
+  - Base URL: your gateway root including `/v1` (e.g. `http://host:8000/v1`).
+  - Model id: the served model name (listed by your `/v1/models`).
+  - API key: optional. Leave empty if your gateway is on a trusted network; otherwise paste the bearer token.
+- Behavior:
+  - The model picker auto-loads from your server’s `/v1/models` when a Base URL is set.
+  - Existing third‑party BYO‑key providers remain unchanged and selectable side‑by‑side.
 
 Scope and merge safety
 ----------------------

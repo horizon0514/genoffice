@@ -28,6 +28,7 @@ export type AiProviderId =
   | 'cloudgpu'
   | 'opencode-zen'
   | 'opencode-go'
+  | 'rz-vllm'
   | 'custom'
 
 /** Genspark account status (gsk login state; the sole auth source for AI features) */

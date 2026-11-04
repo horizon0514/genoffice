@@ -9,7 +9,6 @@ import { KbAskPanel } from './KbAskPanel'
 import { FileBadge } from './file-badge'
 import { placeFolderMenu } from './folder-menu-position'
 import type {
-  AccountStatus,
   CloudProjectKind,
   CloudProjectsSnapshot,
   FolderEntry,
@@ -34,7 +33,9 @@ import { skillUpdateDue } from './IntegrationsPane'
 import { onFilesChanged } from './file-events'
 
 import type { ProjectApi } from '@genoffice/project-store'
-import type { WorkspaceApi } from '../../shared/workspace-api'
+import type { RzConnectionStatus, WorkspaceApi, WorkspaceSummary } from '../../shared/workspace-api'
+import { RzProjectsModal } from './RzProjectsModal'
+import { HandoffModal } from './HandoffModal'
 
 declare global {
   interface Window {
@@ -227,19 +228,12 @@ const FILTERS: { key: string; label: StringKey }[] = [
   { key: 'all', label: 'filterAll' },
   { key: 'docx', label: 'filterDocs' },
   { key: 'xlsx', label: 'filterSheets' },
-  { key: 'pptx', label: 'filterSlides' },
-  { key: 'pdf', label: 'filterPdf' },
-  { key: 'md', label: 'filterMd' },
-  { key: 'html', label: 'filterHtml' },
 ]
 
 /** sidebar filter keys that stand for a family of extensions (mirrors recent-files.ts) */
 const FILTER_FAMILY: Record<string, readonly string[]> = {
   docx: ['docx', 'doc', 'dot', 'odt', 'ott', 'hwpx', 'hwp'],
   xlsx: ['xlsx', 'xlsm', 'xls', 'csv', 'tsv', 'ods', 'ots'],
-  pptx: ['pptx', 'ppt', 'odp', 'otp'],
-  md: ['md', 'markdown', 'txt', 'json'],
-  html: ['html', 'htm'],
 }
 
 function matchesFilter(entry: RecentEntry, filter: string): boolean {
@@ -773,57 +767,26 @@ function GroupPicker({ groups, count, onCancel, onPick, onCreate, onRemove }: Gr
 }
 
 // ── Account entry (bottom-left) ──────────────────────────
-// Currently the Genspark (gsk) login entry; to be upgraded to a signup/account system later.
-// Clicking it opens the settings modal directly (SettingsModal.tsx), which hosts
-// login/logout plus preferences (language, theme, save location, update channel).
-
-const LOGIN_POLL_MS = 2500
-/** fallback deadline when the CLI does not report expires_in (device codes live ~300s) */
-const LOGIN_MAX_WAIT_MS = 300_000
+// The fork uses rz-system as its account system: this entry shows the rz
+// connection state and opens the settings account pane for login / logout.
 
 function AccountEntry({
+  status,
+  onRefreshStatus,
   onStatusChange,
   onFileSearchSettingsChange,
   openRequest,
 }: {
-  onStatusChange?: (status: AccountStatus | null) => void
+  status: RzConnectionStatus | null
+  onRefreshStatus: () => void
+  onStatusChange?: (status: RzConnectionStatus | null) => void
   onFileSearchSettingsChange?: () => void
   /** a fresh object per request: the home list asks to open the modal on a given block */
   openRequest?: SettingsTarget | null
 }) {
   const { t } = useI18n()
-  const [status, setStatus] = useState<AccountStatus | null>(null)
-
-  useEffect(() => {
-    onStatusChange?.(status)
-  }, [status, onStatusChange])
-  const [waiting, setWaiting] = useState(false)
-  // incremented on login retry, resetting the polling timer
-  const [loginNonce, setLoginNonce] = useState(0)
-  const [loginError, setLoginError] = useState<
-    'timeout' | 'launch' | 'network' | 'expired' | 'failed' | null
-  >(null)
-  // auth URL reported by the login CLI — rescue entry when the browser did not open
-  const [authUrl, setAuthUrl] = useState<string | null>(null)
-  const [urlCopied, setUrlCopied] = useState(false)
-  const loginDeadline = useRef(0)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [skillUpdate, setSkillUpdate] = useState(false)
-  const [loggingOut, setLoggingOut] = useState(false)
-  // bumped on logout so an in-flight status refresh (which can still
-  // report logged-in) is discarded instead of resurrecting the UI
-  const statusSeq = useRef(0)
-
-  // query login state once on mount
-  useEffect(() => {
-    let alive = true
-    void window.aiOffice.accountStatus?.().then((s) => {
-      if (alive) setStatus(s)
-    })
-    return () => {
-      alive = false
-    }
-  }, [])
 
   // the skill state is a few file reads; re-probe after the modal closes so an
   // update done inside it clears the dot
@@ -838,106 +801,14 @@ function AccountEntry({
     }
   }, [settingsOpen])
 
-  // login progress pushed from main (gsk login CLI output)
-  useEffect(() => {
-    const off = window.aiOffice.onAccountLogin?.((ev) => {
-      if (ev.phase === 'url') {
-        if (ev.url) setAuthUrl(ev.url)
-        if (ev.expiresInSec) loginDeadline.current = Date.now() + ev.expiresInSec * 1000
-      } else if (ev.phase === 'success') {
-        void window.aiOffice.accountStatus().then((s) => {
-          if (s.loggedIn) {
-            setStatus(s)
-            setWaiting(false)
-            setAuthUrl(null)
-          }
-        })
-      } else if (ev.phase === 'error') {
-        setWaiting(false)
-        setAuthUrl(null)
-        setLoginError(
-          ev.error === 'network' ? 'network' : ev.error === 'expired' ? 'expired' : 'failed',
-        )
-      }
-    })
-    return off
-  }, [])
-
-  // config-file polling stays as the fallback success path (works even if progress events are lost)
-  useEffect(() => {
-    if (!waiting) return
-    const timer = setInterval(() => {
-      void window.aiOffice.accountStatus().then((s) => {
-        if (s.loggedIn) {
-          setStatus(s)
-          setWaiting(false)
-          setAuthUrl(null)
-        } else if (Date.now() > loginDeadline.current) {
-          setWaiting(false)
-          setAuthUrl(null)
-          setLoginError('timeout')
-        }
-      })
-    }, LOGIN_POLL_MS)
-    return () => clearInterval(timer)
-  }, [waiting, loginNonce])
-
-  const loggedIn = status?.loggedIn ?? false
+  const loggedIn = status?.connected === true
   const email = status?.email ?? ''
-  const initial = email ? email[0].toUpperCase() : loggedIn ? 'G' : '?'
-  const errorText = loginError
-    ? {
-        timeout: t('loginTimeout'),
-        launch: t('loginLaunchFailed'),
-        network: t('loginNetworkError'),
-        expired: t('loginExpired'),
-        failed: t('loginFailed'),
-      }[loginError]
-    : null
-
-  const doLogout = () => {
-    setLoggingOut(true)
-    statusSeq.current++
-    void window.aiOffice.accountLogout().then(() => {
-      setLoggingOut(false)
-      setStatus({ loggedIn: false })
-    })
-  }
-
-  const startLogin = () => {
-    // clicking again while waiting = relaunch the login (main kills the stale CLI, so the new device code is the live one)
-    setLoginError(null)
-    setWaiting(true)
-    setAuthUrl(null)
-    setUrlCopied(false)
-    loginDeadline.current = Date.now() + LOGIN_MAX_WAIT_MS
-    setLoginNonce((n) => n + 1)
-    void window.aiOffice.accountLogin().then((launched) => {
-      if (!launched) {
-        setWaiting(false)
-        setLoginError('launch')
-      }
-    })
-  }
-
-  const openLoginUrl = () => void window.aiOffice.openLoginUrl?.()
-
-  const copyLoginUrl = () => {
-    if (!authUrl) return
-    void navigator.clipboard.writeText(authUrl).then(() => {
-      setUrlCopied(true)
-      window.setTimeout(() => setUrlCopied(false), 2000)
-    })
-  }
+  const displayName = status?.name?.trim() || (email ? email.split('@')[0] : '')
+  const initial = (displayName || email || 'R')[0]!.toUpperCase()
+  const errorText = !loggedIn && status?.configured && status.error ? status.error : null
 
   const [target, setTarget] = useState<SettingsTarget | null>(null)
   const openSettings = useCallback((to: SettingsTarget | null) => {
-    // refresh the login state / credit balance; drop the response
-    // when a logout happened while it was in flight
-    const seq = statusSeq.current
-    void window.aiOffice.accountStatus?.().then((s) => {
-      if (seq === statusSeq.current) setStatus(s)
-    })
     setTarget(to)
     setSettingsOpen(true)
   }, [])
@@ -950,128 +821,37 @@ function AccountEntry({
     <div className="account-entry">
       {settingsOpen && (
         <SettingsModal
-          status={status}
-          loggingOut={loggingOut}
-          loginWaiting={waiting}
-          loginUrl={authUrl}
-          urlCopied={urlCopied}
-          onOpenLoginUrl={openLoginUrl}
-          onCopyLoginUrl={copyLoginUrl}
-          onClose={() => setSettingsOpen(false)}
-          onFileSearchChange={onFileSearchSettingsChange}
-          onLogin={() => {
+          rzStatus={status}
+          onClose={() => {
             setSettingsOpen(false)
-            startLogin()
+            onRefreshStatus()
           }}
-          onLogout={doLogout}
+          onFileSearchChange={onFileSearchSettingsChange}
+          onRzStatusChange={onStatusChange}
           skillUpdateDue={skillUpdate}
           onSkillUpdateDue={setSkillUpdate}
           target={target}
         />
-      )}
-      {!settingsOpen && waiting && authUrl && (
-        <div className="login-hint" role="status">
-          <button className="login-hint-open" onClick={openLoginUrl}>
-            {t('loginOpenShort')}
-          </button>
-          <button
-            className={`login-hint-copy${urlCopied ? ' copied' : ''}`}
-            onClick={copyLoginUrl}
-            // static tip: screentips are suppressed from pointerdown until the pointer
-            // leaves the control, so a swapped-in "copied" tip would never show — the
-            // check-mark icon is the visible feedback
-            data-tip={t('loginCopyUrl')}
-            aria-label={urlCopied ? t('loginCopied') : t('loginCopyUrl')}
-          >
-            {urlCopied ? (
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path
-                  d="m3.5 8.5 3 3 6-7"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            ) : (
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <rect
-                  x="5.5"
-                  y="5.5"
-                  width="7"
-                  height="7"
-                  rx="1.5"
-                  stroke="currentColor"
-                  strokeWidth="1.3"
-                />
-                <path
-                  d="M3.5 10.5V5a1.5 1.5 0 0 1 1.5-1.5h5.5"
-                  stroke="currentColor"
-                  strokeWidth="1.3"
-                  strokeLinecap="round"
-                />
-              </svg>
-            )}
-          </button>
-        </div>
       )}
       <button
         className="account-btn"
         onClick={handleClick}
         aria-haspopup="dialog"
         aria-expanded={settingsOpen}
-        data-tip={
-          loggedIn
-            ? email || t('loggedInGenspark')
-            : waiting
-              ? t('waitingLogin')
-              : (errorText ?? t('loginGenspark'))
-        }
+        data-tip={loggedIn ? email || '已连接 rz-system' : (errorText ?? '登录 rz-system')}
         aria-label={t('settings')}
       >
-        <span
-          className={`account-avatar${loggedIn ? ' logged-in' : ''}${waiting ? ' waiting' : ''}`}
-        >
-          {waiting ? (
-            <svg
-              className="account-spinner"
-              width="14"
-              height="14"
-              viewBox="0 0 16 16"
-              aria-hidden="true"
-            >
-              <circle
-                cx="8"
-                cy="8"
-                r="6"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                fill="none"
-                strokeDasharray="26"
-                strokeDashoffset="18"
-                strokeLinecap="round"
-              />
-            </svg>
-          ) : (
-            initial
-          )}
+        <span className={`account-avatar${loggedIn ? ' logged-in' : ''}`}>
+          {initial}
           {skillUpdate && (
             <span className="account-badge" role="img" aria-label={t('intgUpdateDue')} />
           )}
         </span>
         <span className="account-text">
           <span className="account-name">
-            {loggedIn
-              ? email
-                ? email.split('@')[0]
-                : t('loggedIn')
-              : waiting
-                ? t('waitingShort')
-                : t('login')}
+            {loggedIn ? displayName || email || 'rz-system' : '登录 rz-system'}
           </span>
-          {!loggedIn && !waiting && errorText && (
-            <span className="account-sub error">{errorText}</span>
-          )}
+          {!loggedIn && errorText && <span className="account-sub error">{errorText}</span>}
         </span>
         <svg
           className="account-chevron"
@@ -1101,7 +881,6 @@ const CLOUD_FILTERS = [
   { key: 'all', label: 'filterAll' },
   { key: 'docs', label: 'filterDocs' },
   { key: 'sheets', label: 'filterSheets' },
-  { key: 'slides', label: 'filterSlides' },
 ] as const satisfies readonly { key: 'all' | CloudProjectKind; label: StringKey }[]
 
 /** module kind → file icon extension */
@@ -1188,7 +967,12 @@ function CloudProjectsView() {
 
   // filter / search / sort are all local over the snapshot — no requests
   const q = query.trim().toLowerCase()
-  let list = snapshot?.projects.filter((proj) => kind === 'all' || proj.kind === kind) ?? []
+  // this build only exposes Docs and Sheets; cloud slide projects stay out of the list
+  let list =
+    snapshot?.projects.filter(
+      (proj) =>
+        (proj.kind === 'docs' || proj.kind === 'sheets') && (kind === 'all' || proj.kind === kind),
+    ) ?? []
   if (q) list = list.filter((proj) => proj.title.toLowerCase().includes(q))
   if (sort === 'oldest') list = [...list].reverse()
   const visible = list.slice(0, revealed)
@@ -1541,20 +1325,74 @@ export function Home() {
   const [confirmMissing, setConfirmMissing] = useState<RecentEntry | null>(null)
   // name in the greeting; omitted when logged out
   const [accountName, setAccountName] = useState('')
-  // Genspark Projects is web-account data, so its nav entry only shows when logged in
-  const [loggedIn, setLoggedIn] = useState(false)
-  // single source of account state: AccountEntry reports every change (initial
-  // load, login, logout), keeping the greeting name and the nav entry in sync
-  const handleAccountStatus = useCallback((s: AccountStatus | null) => {
-    const on = s?.loggedIn ?? false
-    setLoggedIn(on)
-    if (!on) setCloudMode(false)
-    const name = on ? (s?.email ?? '').split('@')[0] : ''
-    setAccountName(name ? name[0].toUpperCase() + name.slice(1) : '')
+  // Genspark Projects is web-account data, so its nav entry keeps its own
+  // (read-only) status instead of riding the rz-system login state.
+  const [cloudLoggedIn, setCloudLoggedIn] = useState(false)
+  useEffect(() => {
+    let alive = true
+    void window.aiOffice.accountStatus?.().then((next) => {
+      if (alive) setCloudLoggedIn(next?.loggedIn === true)
+    })
+    return () => {
+      alive = false
+    }
   }, [])
   const [greetAskKey] = useState(
     () => GREET_ASK_KEYS[Math.floor(Math.random() * GREET_ASK_KEYS.length)]!,
   )
+
+  // ── rz-system workspace state ──
+  const [rzOpen, setRzOpen] = useState(false)
+  const [handoffTarget, setHandoffTarget] = useState<{
+    workspace: WorkspaceSummary
+    project: WorkspaceSummary['projects'][number]
+  } | null>(null)
+  const [rzWorkspace, setRzWorkspace] = useState<WorkspaceSummary | null>(null)
+  const [rzWorkspaces, setRzWorkspaces] = useState<WorkspaceSummary[]>([])
+  const [rzStatus, setRzStatus] = useState<RzConnectionStatus | null>(null)
+  const refreshRzWorkspaces = useCallback(async () => {
+    const api = window.workspaceApi
+    if (!api) return
+    try {
+      setRzWorkspaces(await api.rzWorkspaces())
+    } catch {
+      setRzWorkspaces([])
+    }
+  }, [])
+  const refreshRzStatus = useCallback(async () => {
+    const api = window.workspaceApi
+    if (!api) return
+    try {
+      setRzStatus(await api.rzStatus())
+    } catch (err) {
+      setRzStatus(
+        (prev) =>
+          prev ?? {
+            configured: false,
+            connected: false,
+            error: err instanceof Error ? err.message : String(err),
+          },
+      )
+    }
+  }, [])
+  useEffect(() => {
+    const api = window.workspaceApi
+    if (!api) return
+    let cancelled = false
+    void api.get().then((ws) => {
+      if (!cancelled) setRzWorkspace(ws)
+    })
+    void refreshRzWorkspaces()
+    void refreshRzStatus()
+    return () => {
+      cancelled = true
+    }
+  }, [refreshRzStatus, refreshRzWorkspaces])
+  useEffect(() => {
+    if (rzStatus?.connected !== true) setCloudMode(false)
+    const name = rzStatus?.name?.trim() || (rzStatus?.email ?? '').split('@')[0] || ''
+    setAccountName(name ? name[0]!.toUpperCase() + name.slice(1) : '')
+  }, [rzStatus])
 
   // ── Folder tree state ──
   // the default save folder first, then the folders the user added; `root` is the default one
@@ -2250,31 +2088,114 @@ export function Home() {
       sub: '.xlsx',
       action: () => window.aiOffice.newSheet(newFileOpts),
     },
-    {
-      ext: 'pptx',
-      title: t('newSlide'),
-      sub: '.pptx',
-      action: () => window.aiOffice.newSlide(newFileOpts),
-    },
-    {
-      ext: 'md',
-      title: t('newMarkdown'),
-      sub: '.md',
-      action: () => window.aiOffice.newMarkdown(newFileOpts),
-    },
-    {
-      ext: 'html',
-      title: t('newHtml'),
-      sub: '.html',
-      action: () => window.aiOffice.newHtml(newFileOpts),
-    },
-    {
-      ext: 'pdf',
-      title: t('newPdf'),
-      sub: '.pdf',
-      action: () => window.aiOffice.newPdf(newFileOpts),
-    },
   ]
+
+  function renderWorkspacePanel() {
+    const api = window.workspaceApi
+    if (!api) return null
+    const connected = rzStatus?.connected === true
+    const configured = rzStatus?.configured === true
+    const workspaces =
+      rzWorkspaces.length > 0
+        ? rzWorkspaces
+        : rzWorkspace?.rzSystem?.projectIds?.length
+          ? [rzWorkspace]
+          : []
+    const seenProjects = new Set<string>()
+    const projects = workspaces.flatMap((workspace) =>
+      workspace.projects.flatMap((project) => {
+        if (seenProjects.has(project.id)) return []
+        seenProjects.add(project.id)
+        return [{ workspace, project }]
+      }),
+    )
+    const workspaceCount = new Set(projects.map(({ workspace }) => workspace.dir)).size
+    const fileCount = projects.reduce((n, { project }) => n + project.fileCount, 0)
+    const previewProjects = projects.slice(0, 5)
+    const hiddenProjectCount = Math.max(0, projects.length - previewProjects.length)
+    const latestWorkspace = projects[0]?.workspace ?? workspaces[0]
+    const lastSync = workspaces
+      .map((workspace) => workspace.rzSystem?.lastSyncAt)
+      .filter((value): value is string => !!value)
+      .sort((a, b) => Date.parse(b) - Date.parse(a))[0]
+    const lastSyncLabel = lastSync
+      ? new Date(lastSync).toLocaleString('zh-CN', {
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      : null
+    return (
+      <section className="workspace-panel" aria-label="rz-system 工作空间">
+        <div className="workspace-panel-main">
+          <span className="workspace-kicker">rz-system 集成</span>
+          <div className="workspace-title-row">
+            <span className="workspace-title">
+              {projects.length === 1
+                ? projects[0]!.project.name
+                : projects.length > 1
+                  ? `${projects.length} 个已同步项目`
+                  : '还没有同步项目'}
+            </span>
+            <span
+              className={`workspace-dot${connected ? ' online' : ''}`}
+              title={connected ? '已连接' : configured ? '连接已失效' : '未配置'}
+            />
+            <span className="workspace-conn">
+              {connected
+                ? `已连接 ${rzStatus?.name || rzStatus?.email || ''}`
+                : configured
+                  ? '连接已失效，请重新登录'
+                  : '尚未配置 rz-system'}
+            </span>
+          </div>
+          <span className="workspace-meta">
+            {projects.length > 0
+              ? `${workspaceCount} 个工作空间 · ${fileCount} 个文件${lastSyncLabel ? ` · 最近同步 ${lastSyncLabel}` : ''} · 点击项目查看交接`
+              : '获取 rz-system 项目列表，自动创建工作空间并下载过程资料、审核稿和归档材料。'}
+          </span>
+          {projects.length > 0 && (
+            <div className="workspace-projects">
+              {hiddenProjectCount > 0 && (
+                <button
+                  className="workspace-project-chip workspace-project-more"
+                  title="打开完整项目列表"
+                  onClick={() => setRzOpen(true)}
+                >
+                  查看全部 {projects.length} 个
+                </button>
+              )}
+              {previewProjects.map(({ workspace, project }) => (
+                <button
+                  key={`${workspace.dir}:${project.id}`}
+                  className="workspace-project-chip"
+                  title={`${project.taskName ?? project.name} · 打开项目交接`}
+                  onClick={() => setHandoffTarget({ workspace, project })}
+                >
+                  <span>{project.projectCode ?? project.name}</span>
+                  <span className="workspace-chip-name">{project.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="workspace-panel-actions">
+          <button className="btn btn-primary" onClick={() => setRzOpen(true)}>
+            {projects.length > 0 ? '同步 rz-system 项目' : '从 rz-system 创建'}
+          </button>
+          {latestWorkspace && (
+            <button
+              className="btn btn-secondary"
+              onClick={() => void window.aiOffice.revealPath(latestWorkspace.dir)}
+            >
+              在文件夹中查看
+            </button>
+          )}
+        </div>
+      </section>
+    )
+  }
 
   function renderQuickCards() {
     return (
@@ -2312,8 +2233,9 @@ export function Home() {
             if (!window.workspaceApi) return
             void window.workspaceApi.pick().then((ws) => {
               if (ws) {
-                // eslint-disable-next-line no-alert
-                alert(`Workspace ready: ${ws.name}`)
+                setRzWorkspace(ws)
+                void refreshRzWorkspaces()
+                void refreshRzStatus()
               }
             })
           }}
@@ -2328,28 +2250,19 @@ export function Home() {
             <span className="quick-sub">Local folder + manifest</span>
           </span>
         </button>
-        <button
-          className="quick-card"
-          onClick={() => {
-            if (!window.workspaceApi) return
-            void window.workspaceApi.importRz().then((r) => {
-              // eslint-disable-next-line no-alert
-              alert(
-                r.ok
-                  ? `Imported ${r.projects} rz-project(s) (${r.tasks} task(s))`
-                  : `Import failed: ${r.error ?? 'Unknown error'}`,
-              )
-            })
-          }}
-        >
+        <button className="quick-card" onClick={() => setRzOpen(true)}>
           <span className="quick-folder">
             <FolderIcon size={18} />
           </span>
           <span className="quick-text">
             <span className="quick-title-row">
-              <span className="quick-title">Import from rz-system</span>
+              <span className="quick-title">从 rz-system 同步</span>
             </span>
-            <span className="quick-sub">RZ_API_BASE_URL / RZ_API_TOKEN</span>
+            <span className="quick-sub">
+              {rzStatus?.connected
+                ? `已连接 ${rzStatus.name || rzStatus.email || 'rz-system'}`
+                : '选择项目 · 自动创建工作空间'}
+            </span>
           </span>
         </button>
       </div>
@@ -3215,6 +3128,7 @@ export function Home() {
             <span className="section-label">{t('secQuickStart')}</span>
           </div>
           {renderQuickCards()}
+          {renderWorkspacePanel()}
         </section>
 
         <section className="recents" aria-label={t('folders')}>
@@ -3333,6 +3247,7 @@ export function Home() {
             </h1>
           </div>
           {renderQuickCards()}
+          {renderWorkspacePanel()}
         </section>
 
         <section
@@ -3580,7 +3495,7 @@ export function Home() {
             </svg>
             <span className="nav-label">{t('navAsk')}</span>
           </button>
-          {loggedIn && (
+          {cloudLoggedIn && (
             <button
               className={`nav-item${cloudMode && !selectedFolder ? ' active' : ''}`}
               onClick={() => {
@@ -3622,7 +3537,9 @@ export function Home() {
         <div className="sidebar-divider" />
         {renderFolderPanel()}
         <AccountEntry
-          onStatusChange={handleAccountStatus}
+          status={rzStatus}
+          onRefreshStatus={() => void refreshRzStatus()}
+          onStatusChange={setRzStatus}
           onFileSearchSettingsChange={() => setRerankSettingsTick((n) => n + 1)}
           openRequest={settingsRequest}
         />
@@ -3771,6 +3688,36 @@ export function Home() {
           onChoose={(policy) => {
             if (policy === 'skip') setConflict(null)
             else void doMove(conflict.paths, conflict.targetDir, policy)
+          }}
+        />
+      )}
+
+      {rzOpen && (
+        <RzProjectsModal
+          initialWorkspace={rzWorkspace}
+          onOpenSettings={() => {
+            setRzOpen(false)
+            setSettingsRequest({ section: 'account' })
+          }}
+          onClose={() => setRzOpen(false)}
+          onSynced={(workspace) => {
+            setRzWorkspace(workspace)
+            void refreshRzWorkspaces()
+            void refreshRzStatus()
+            refresh()
+          }}
+        />
+      )}
+
+      {handoffTarget && (
+        <HandoffModal
+          workspace={handoffTarget.workspace}
+          project={handoffTarget.project}
+          currentUserName={rzStatus?.name}
+          onClose={() => setHandoffTarget(null)}
+          onApplied={() => {
+            void refreshRzWorkspaces()
+            refresh()
           }}
         />
       )}

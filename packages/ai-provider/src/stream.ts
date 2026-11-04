@@ -16,6 +16,11 @@ export { streamOpenAiResponses } from './protocols/openai-responses'
 export { AiCreditsError, sseLines } from './protocols/shared'
 export type { StreamCallbacks } from './protocols/shared'
 
+/** Per-call wire overrides layered over the provider endpoint's own defaults. */
+export interface StreamForProviderExtras {
+  bodyExtras?: Record<string, unknown>
+}
+
 /** route a streaming, tool-calling-capable turn by provider id */
 export async function streamForProvider(
   provider: AiProviderId,
@@ -25,10 +30,12 @@ export async function streamForProvider(
   tools: AgentToolDef[],
   maxTokens: number,
   cb: StreamCallbacks,
+  extras?: StreamForProviderExtras,
 ): Promise<void> {
   const endpoint = getProviderAdapter(provider).resolveEndpoint(config)
   const { baseUrl } = endpoint
   if (endpoint.model) config = { ...config, model: endpoint.model }
+  const bodyExtras = { ...endpoint.bodyExtras, ...extras?.bodyExtras }
   if (endpoint.protocol === 'codex-app-server') {
     return streamCodexAppServer(config, system, messages, tools, maxTokens, cb)
   }
@@ -53,14 +60,14 @@ export async function streamForProvider(
         return streamOpenAiCompatible(baseUrl, config, system, messages, tools, tokens, cb, {
           omitTemperature: endpoint.omitTemperature,
           useMaxCompletionTokens: endpoint.useMaxCompletionTokens,
-          bodyExtras: endpoint.bodyExtras,
+          ...(Object.keys(bodyExtras).length > 0 ? { bodyExtras } : {}),
           echoReasoning: endpoint.echoReasoning,
           headers: endpoint.headers,
           idleTimeoutMs: endpoint.idleTimeoutMs,
         })
       case 'openai-responses':
         return streamOpenAiResponses(baseUrl, config, system, messages, tools, tokens, cb, {
-          bodyExtras: endpoint.bodyExtras,
+          ...(Object.keys(bodyExtras).length > 0 ? { bodyExtras } : {}),
           headers: endpoint.headers,
           idleTimeoutMs: endpoint.idleTimeoutMs,
         })

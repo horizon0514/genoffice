@@ -234,6 +234,17 @@ describe('provider registry', () => {
     })
   })
 
+  it('resolves rz-vllm to the user-supplied OpenAI-compatible endpoint', () => {
+    const endpoint = AI_PROVIDER_ADAPTERS['rz-vllm'].resolveEndpoint(
+      config('my-model', 'http://10.0.0.5:8000/v1'),
+    )
+    expect(endpoint).toEqual({
+      protocol: 'openai-compatible',
+      baseUrl: 'http://10.0.0.5:8000/v1',
+      bodyExtras: { reasoning_effort: 'none' },
+    })
+  })
+
   it('routes OpenCode Zen per model onto the protocol the gateway serves it on', () => {
     const resolve = (model: string, baseUrl?: string) =>
       AI_PROVIDER_ADAPTERS['opencode-zen'].resolveEndpoint(config(model, baseUrl))

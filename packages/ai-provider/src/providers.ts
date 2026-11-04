@@ -52,6 +52,7 @@ export const AI_PROVIDERS: AiProviderMeta[] = [
   {
     id: 'genspark',
     label: 'Genspark',
+    hidden: true,
     // must stay within the proxy's served set (GET /api/llm_proxy/v1/models);
     // bare gpt-5.6 and the gemini family dropped off it (verified 2026-08-31).
     // DeepSeek goes by the proxy's hyphenated pool id; V4.1 Flash takes images
@@ -312,6 +313,7 @@ export const AI_PROVIDERS: AiProviderMeta[] = [
   {
     id: 'requesty',
     label: 'Requesty',
+    hidden: true,
     // Managed policy ids exactly as GET router.requesty.ai/v1/models/managed
     // lists them (2026-09-24): short stable names Requesty routes across
     // providers, used as-is in the model field. The full vendor-prefixed
@@ -335,6 +337,7 @@ export const AI_PROVIDERS: AiProviderMeta[] = [
   {
     id: 'opper',
     label: 'Opper',
+    hidden: true,
     // Pool ids exactly as GET api.opper.ai/v3/models lists them (2026-09-14):
     // a bare name is an Opper pool, and Opper picks the serving provider and
     // region per request. The vendor-prefixed catalog (anthropic/claude-sonnet-4-6,
@@ -356,6 +359,7 @@ export const AI_PROVIDERS: AiProviderMeta[] = [
   {
     id: 'cheaperinference',
     label: 'Cheaper Inference',
+    hidden: true,
     // Bare model ids as GET api.cheaperinference.com/v1/models lists them (the
     // chat rows, type "text"): no vendor prefix, one key for every lab. Other
     // ids from that list work as-is when typed in. Full list at
@@ -367,6 +371,7 @@ export const AI_PROVIDERS: AiProviderMeta[] = [
   {
     id: 'atlascloud',
     label: 'Atlas Cloud',
+    hidden: true,
     // Lab-namespaced ids exactly as GET api.atlascloud.ai/v1/models lists them
     // (2026-10-08, public endpoint, no key needed); the rest of the 117-model
     // catalog works as-is when typed in. Chat, temperature and — for the
@@ -391,6 +396,7 @@ export const AI_PROVIDERS: AiProviderMeta[] = [
   {
     id: 'runcrate',
     label: 'Runcrate',
+    hidden: true,
     // Lab-namespaced ids exactly as GET api.runcrate.ai/v1/models lists them
     // (2026-10-25, public endpoint, no key needed); the rest of the catalog
     // works as-is when typed in. Chat, streaming and tool calls are
@@ -412,6 +418,7 @@ export const AI_PROVIDERS: AiProviderMeta[] = [
   {
     id: 'cloudgpu',
     label: 'CloudGPU',
+    hidden: true,
     // Bare model ids exactly as GET https://cloudgpu.app/v1/models lists them
     // (2026-10-29, public endpoint, no key needed); the rest of the catalog
     // works as-is when typed in. Docs: https://cloudgpu.app/api/docs.
@@ -424,6 +431,7 @@ export const AI_PROVIDERS: AiProviderMeta[] = [
   {
     id: 'opencode-zen',
     label: 'OpenCode Zen',
+    hidden: true,
     // Pay-as-you-go gateway (opencode.ai/docs/zen); ids exactly as GET
     // /zen/v1/models lists them (2026-10-09). GPT-5.x/6, Grok and Muse Spark
     // are served only through the Responses API, which has no protocol here,
@@ -451,6 +459,7 @@ export const AI_PROVIDERS: AiProviderMeta[] = [
   {
     id: 'opencode-go',
     label: 'OpenCode Go',
+    hidden: true,
     // $10/month subscription to open-weight coding models (opencode.ai/docs/go),
     // same key as Zen; ids exactly as GET /zen/go/v1/models lists them
     // (re-read 2026-09-30). GPT-5.6 Luna, Grok and Muse Spark are
@@ -487,13 +496,27 @@ export const AI_PROVIDERS: AiProviderMeta[] = [
     keyPlaceholder: 'API Key',
     needsBaseUrl: true,
   },
+  {
+    id: 'rz-vllm',
+    label: 'RZ vLLM',
+    // OpenAI-compatible internal gateway; the endpoint stays overridable and
+    // models are probed live from its /v1/models route.
+    models: [],
+    defaultModel: 'qwen3.8-27b',
+    keyPlaceholder: 'API Key',
+    defaultBaseUrl: 'http://192.168.2.70:9000/v1',
+    defaultApiKey: '123456',
+    needsBaseUrl: true,
+  },
 ]
 
+/** Chat provider selected on a fresh install and used when nothing else is usable. */
+export const DEFAULT_AI_PROVIDER: AiProviderId = 'rz-vllm'
+
 /**
- * Fresh settings with every provider's default model and an empty key,
- * except providers listed in `defaultApiKeys` (e.g. an app-specific
- * preconfigured Anthropic key). Callers own that policy; this package
- * has no hardcoded keys.
+ * Fresh settings with every provider's shipped model, endpoint, and key.
+ * `defaultApiKeys` (e.g. an app-specific Anthropic key) overrides a provider's
+ * own default key; everything else ships empty.
  */
 export function defaultAiSettings(
   defaultApiKeys?: Partial<Record<AiProviderId, string>>,
@@ -501,14 +524,14 @@ export function defaultAiSettings(
   const providers = {} as AiSettings['providers']
   for (const meta of AI_PROVIDERS) {
     providers[meta.id] = {
-      apiKey: defaultApiKeys?.[meta.id] ?? '',
+      apiKey: defaultApiKeys?.[meta.id] ?? meta.defaultApiKey ?? '',
       model: meta.defaultModel,
-      baseUrl: meta.needsBaseUrl ? '' : undefined,
+      baseUrl: meta.needsBaseUrl ? (meta.defaultBaseUrl ?? '') : undefined,
       cliPath: meta.needsCliPath ? '' : undefined,
     }
   }
   return {
-    provider: 'genspark',
+    provider: DEFAULT_AI_PROVIDER,
     providers,
     gskToolsEnabled: true,
     media: defaultAiMediaSettings(),
@@ -526,26 +549,26 @@ export function cloudToolsEnabled(settings: Pick<AiSettings, 'gskToolsEnabled'>)
  * (api-key providers need a key and a model id; custom also needs a base URL).
  * Codex can auto-discover its executable. Anything else — including unknown
  * ids from a hand-edited
- * settings file — falls back to genspark, so a half-filled setup degrades
- * to the signed-in default instead of silently disabling AI.
+ * settings file — falls back to the shipped default, so a half-filled setup
+ * degrades to a working provider instead of silently disabling AI.
  */
 export function activeProvider(settings: AiSettings): AiProviderId {
   const provider = settings.provider
-  if (provider === 'genspark') return 'genspark'
+  if (provider === DEFAULT_AI_PROVIDER) return provider
   const meta = AI_PROVIDERS.find((m) => m.id === provider)
   const config = settings.providers?.[provider]
-  if (!meta || !config) return 'genspark'
+  if (!meta || meta.hidden || !config) return DEFAULT_AI_PROVIDER
   if (meta.needsCliPath) return provider
   // Trim-aware: in-memory settings bypass the trimConfigs applied to
   // persisted files, and a whitespace-only key/URL/model is a 401, not a config.
-  if (!config.model?.trim()) return 'genspark'
+  if (!config.model?.trim()) return DEFAULT_AI_PROVIDER
   if (meta.needsBaseUrl) {
     // Custom OpenAI-compatible endpoints (Ollama, LM Studio, vLLM) accept
     // anonymous requests: base URL + model suffice, the key stays optional.
-    if (!config.baseUrl?.trim()) return 'genspark'
+    if (!config.baseUrl?.trim()) return DEFAULT_AI_PROVIDER
     return provider
   }
-  if (!config.apiKey?.trim()) return 'genspark'
+  if (!config.apiKey?.trim()) return DEFAULT_AI_PROVIDER
   return provider
 }
 
@@ -675,8 +698,12 @@ export function resolveAiSettings(stored: unknown, defaults: AiSettings): AiSett
     }
     return resolveCustomEndpoints(defaults)
   }
+  const storedProvider = settings.provider ?? defaults.provider
+  const provider = AI_PROVIDERS.find((m) => m.id === storedProvider)?.hidden
+    ? defaults.provider
+    : storedProvider
   return resolveCustomEndpoints({
-    provider: settings.provider ?? defaults.provider,
+    provider,
     customEndpoints: settings.customEndpoints,
     customEndpoint: settings.customEndpoint,
     // Trim before migrating: a pasted " deepseek-reasoner " must still hit

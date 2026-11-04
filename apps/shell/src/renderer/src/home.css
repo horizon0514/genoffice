@@ -6,6 +6,11 @@
   --accent-hover: #0e72e5;
   /* selected-option tint for the shared dropdown (gs-dd) */
   --accent-soft: #eaf0fd;
+  /* rz-system brand orange, scoped to the fork's account / workspace integration */
+  --rz-accent: #fa541c;
+  --rz-accent-hover: #d4380d;
+  --rz-accent-soft: #fff2e8;
+  --rz-accent-border: #ffd8bf;
   --modal-width-sm: 480px;
   --avatar-bg: #e8ebef;
   --badge-bg: #eaf0fd;
@@ -28,6 +33,10 @@
   --accent: #3f99ff;
   --accent-hover: #5ba5ff;
   --accent-soft: #24354d;
+  --rz-accent: #ff7a45;
+  --rz-accent-hover: #ff9c6e;
+  --rz-accent-soft: #3a1c12;
+  --rz-accent-border: #8a3b21;
   --avatar-bg: #333;
   --badge-bg: #2a3a4a;
   --checkbox-bg: #333;
@@ -44,6 +53,10 @@
     --accent: #3f99ff;
     --accent-hover: #5ba5ff;
     --accent-soft: #24354d;
+    --rz-accent: #ff7a45;
+    --rz-accent-hover: #ff9c6e;
+    --rz-accent-soft: #3a1c12;
+    --rz-accent-border: #8a3b21;
     --avatar-bg: #333;
     --badge-bg: #2a3a4a;
     --checkbox-bg: #333;
@@ -188,7 +201,7 @@ body.vib .home {
   font-variant-numeric: tabular-nums;
 }
 
-/* ---- bottom-left account entry (today = Genspark login, later = signup/account system) ---- */
+/* ---- bottom-left account entry (rz-system session) ---- */
 /* clicking it opens the settings modal (settings.css) directly, which hosts
    login/logout plus preferences (language / theme / save location / update channel) */
 
@@ -233,12 +246,8 @@ body.vib .home {
 }
 
 .account-avatar.logged-in {
-  background: linear-gradient(135deg, #3d7ff5, #1b58cf);
-  color: #fff;
-}
-
-.account-avatar.waiting {
-  color: var(--accent);
+  background: linear-gradient(135deg, var(--rz-accent), var(--rz-accent-hover));
+  color: var(--color-btn-primary-text);
 }
 
 .account-badge {
@@ -250,16 +259,6 @@ body.vib .home {
   border-radius: 50%;
   border: 2px solid var(--chrome-bg);
   background: var(--danger);
-}
-
-.account-spinner {
-  animation: account-spin 0.9s linear infinite;
-}
-
-@keyframes account-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .account-text {
@@ -294,69 +293,6 @@ body.vib .home {
 
 .account-sub.error {
   color: #b3261e;
-}
-
-/* one-line rescue hint while waiting for the browser sign-in (auto-open may have failed) */
-.login-hint {
-  position: absolute;
-  left: -8px;
-  bottom: calc(100% + 4px);
-  width: calc(100% + 16px);
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 4px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 10px;
-  background: var(--surface);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-  z-index: 30;
-}
-
-/* class selectors so the per-button font-size below is not out-specified by a descendant rule */
-.login-hint-open,
-.login-hint-copy {
-  border: none;
-  background: none;
-  font: inherit;
-  cursor: pointer;
-}
-
-.login-hint-open:hover,
-.login-hint-copy:hover {
-  background: var(--bg-hover);
-}
-
-.login-hint-open {
-  flex: 1;
-  min-width: 0;
-  border-radius: 7px;
-  font-size: 12.5px;
-  line-height: 17px;
-  padding: 4px 6px;
-  color: var(--accent);
-  text-align: start;
-}
-
-.login-hint-copy {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  align-self: center;
-  width: 25px;
-  height: 25px;
-  padding: 0;
-  border-radius: 7px;
-  color: var(--text-muted);
-}
-
-.login-hint-copy:hover {
-  color: var(--text-primary);
-}
-
-.login-hint-copy.copied {
-  color: var(--accent);
 }
 
 /* ---- main content ---- */
@@ -2838,4 +2774,633 @@ button.kb-ask-card-name:hover {
 .kb-ask-thread-new:hover {
   background: var(--hover);
   color: var(--text);
+}
+
+/* ── rz-system workspace panel ─────────────────────────── */
+
+.workspace-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--rz-accent-border);
+  border-radius: 12px;
+  background: var(--rz-accent-soft);
+}
+
+.workspace-panel-main {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.workspace-kicker {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--rz-accent);
+  text-transform: uppercase;
+}
+
+.workspace-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.workspace-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+}
+
+.workspace-dot.online {
+  background: var(--rz-accent);
+}
+
+.workspace-conn,
+.workspace-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.workspace-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-projects {
+  display: flex;
+  gap: 6px;
+  max-width: 100%;
+  margin-top: 4px;
+  padding-bottom: 2px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.workspace-project-chip {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 6px;
+  max-width: 260px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.workspace-project-chip:hover {
+  border-color: var(--rz-accent);
+  color: var(--text);
+}
+
+.workspace-project-more {
+  border-color: var(--rz-accent-border);
+  background: var(--rz-accent-soft);
+  color: var(--rz-accent);
+  font-weight: 500;
+}
+
+.workspace-project-more:hover {
+  border-color: var(--rz-accent);
+  background: var(--rz-accent-soft);
+}
+
+.workspace-chip-name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.workspace-panel-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.workspace-panel-actions .btn-primary {
+  background: var(--rz-accent);
+  color: var(--color-btn-primary-text);
+}
+
+.workspace-panel-actions .btn-primary:hover:not(:disabled) {
+  background: var(--rz-accent-hover);
+}
+
+/* ── project handoff modal ─────────────────────────────── */
+
+.handoff-modal {
+  width: 880px;
+  max-width: calc(100vw - 64px);
+  max-height: min(86vh, 820px);
+}
+
+.handoff-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.handoff-publish {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--surface-subtle);
+}
+
+.handoff-note {
+  width: 100%;
+  resize: vertical;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  outline: none;
+}
+
+.handoff-note:focus {
+  border-color: var(--rz-accent);
+}
+
+.handoff-publish-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.handoff-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.handoff-result {
+  gap: 6px;
+}
+
+.handoff-link-btn {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--rz-accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.handoff-link-btn:hover:not(:disabled) {
+  color: var(--rz-accent-hover);
+  text-decoration: underline;
+}
+
+.handoff-link-btn:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.handoff-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 2px 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.handoff-body {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.handoff-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 160px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.handoff-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.handoff-row:hover {
+  border-color: var(--border-hover);
+}
+
+.handoff-row.active {
+  border-color: var(--rz-accent-border);
+  background: var(--rz-accent-soft);
+}
+
+.handoff-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.handoff-author {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.handoff-badge {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--rz-accent);
+  color: var(--color-btn-primary-text);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.handoff-time {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.handoff-note-text {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.handoff-row-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.handoff-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 200px;
+  overflow: hidden;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+}
+
+.handoff-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.handoff-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.handoff-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-height: 120px;
+  overflow-y: auto;
+}
+
+.handoff-diff-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.handoff-kind {
+  flex-shrink: 0;
+  width: 36px;
+  font-size: 11px;
+  text-align: center;
+}
+
+.handoff-kind-new {
+  color: var(--rz-accent);
+}
+
+.handoff-kind-changed {
+  color: var(--accent);
+}
+
+.handoff-kind-unchanged {
+  color: var(--text-muted);
+}
+
+.handoff-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.handoff-detail-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* ── rz-system sync modal ──────────────────────────────── */
+
+.rz-modal {
+  width: 780px;
+  max-width: calc(100vw - 64px);
+  max-height: min(82vh, 760px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.rz-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.rz-modal-head h3 {
+  margin: 0;
+  color: var(--rz-accent);
+}
+
+.rz-subtitle {
+  margin-top: 4px !important;
+  font-size: 12px !important;
+  color: var(--text-muted);
+}
+
+.rz-small {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.rz-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rz-search {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.rz-search:focus {
+  border-color: var(--rz-accent);
+}
+
+.rz-login-needed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 220px;
+  padding: 24px;
+  border: 1px solid var(--rz-accent-border);
+  border-radius: 10px;
+  background: var(--rz-accent-soft);
+  text-align: center;
+}
+
+.rz-login-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--rz-accent);
+}
+
+.rz-login-desc {
+  max-width: 440px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.rz-error {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--color-error);
+  color: var(--color-error);
+  font-size: 12px;
+}
+
+.rz-result {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--rz-accent-border);
+  border-radius: 8px;
+  background: var(--rz-accent-soft);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.rz-result code {
+  font-size: 11px;
+  color: var(--text-muted);
+  word-break: break-all;
+}
+
+.rz-result ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+}
+
+.rz-project-list {
+  flex: 1;
+  min-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 4px;
+}
+
+.rz-empty {
+  padding: 28px 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.rz-project-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rz-project-row:hover {
+  background: var(--hover);
+}
+
+.rz-project-row.active {
+  background: var(--rz-accent-soft);
+  box-shadow: inset 2px 0 0 var(--rz-accent);
+}
+
+.rz-project-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rz-project-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.rz-project-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.rz-status {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.rz-status-doing {
+  background: var(--rz-accent-soft);
+  color: var(--rz-accent);
+}
+
+.rz-project-files,
+.rz-project-date {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.rz-mode-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.rz-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.rz-note {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-tertiary);
+}
+
+.rz-actions {
+  margin-top: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.rz-actions .btn-primary,
+.rz-login-needed .btn-primary {
+  background: var(--rz-accent);
+  color: var(--color-btn-primary-text);
+}
+
+.rz-actions .btn-primary:hover:not(:disabled),
+.rz-login-needed .btn-primary:hover:not(:disabled) {
+  background: var(--rz-accent-hover);
 }

@@ -28,6 +28,7 @@ export type AiProviderId =
   | 'cloudgpu'
   | 'opencode-zen'
   | 'opencode-go'
+  | 'rz-vllm'
   | 'custom'
 
 /** Genspark account status (gsk login state; the sole auth source for AI features) */
@@ -160,6 +161,12 @@ export interface AiProviderMeta {
   models: string[]
   defaultModel: string
   keyPlaceholder: string
+  /** endpoint prefilled for providers that let the user override their base URL */
+  defaultBaseUrl?: string
+  /** key prefilled for internal providers whose gateway does not validate it */
+  defaultApiKey?: string
+  /** kept for stored configs and internal flows, but not offered in the settings/picker lists */
+  hidden?: boolean
   needsBaseUrl?: boolean
   needsCliPath?: boolean
   /** the settings page refreshes `models` from the vendor's own /models route; the shipped list is the offline fallback */

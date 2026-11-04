@@ -114,12 +114,9 @@ describe('MiniMax text choices', () => {
       defaults,
     )
     expect(
-      await chatForProvider(
-        activeProvider(settings),
-        settings.providers[provider],
-        'system',
-        'hello',
-      ),
+      // These gateways are hidden from the picker but their adapters stay in
+      // the registry for stored configs, so exercise the transport directly.
+      await chatForProvider(provider, settings.providers[provider], 'system', 'hello'),
     ).toEqual({ ok: true, content: 'ok' })
     expect(fetchMock.mock.calls[0][0]).toBe(url)
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).model).toBe(model)

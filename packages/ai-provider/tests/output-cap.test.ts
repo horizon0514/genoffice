@@ -32,6 +32,12 @@ describe('parseOutputCapRejection', () => {
         131072,
       ),
     ).toBe(128000)
+    expect(
+      parseOutputCapRejection(
+        `HTTP 400: {"error":{"type":"invalid_request_error","message":"prompt (15739 tokens) + max tokens (131072) exceeds the context (131072); requests are never truncated. Send a smaller max_tokens (at most 115325 here), or add \\"fit_max_tokens\\": true to the model's strata-model.json"}}`,
+        131072,
+      ),
+    ).toBe(115325)
   })
 
   it('ignores unrelated 400s, other statuses, and model-name digits', () => {
@@ -103,5 +109,58 @@ describe('streamForProvider: output cap fallback', () => {
       streamForProvider('kimi', { apiKey: 'k', model: 'kimi-k9' }, 'sys', [], [], 32768, cb()),
     ).rejects.toThrow(/HTTP 400/)
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries a context overflow at the room left without poisoning later turns', async () => {
+    const overflow = () =>
+      errorResponse(
+        400,
+        '{"error":{"message":"prompt (15739 tokens) + max tokens (131072) exceeds the context (131072); requests are never truncated. Send a smaller max_tokens (at most 115325 here)"}}',
+      )
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => Promise.resolve(overflow()))
+      .mockImplementation(() => Promise.resolve(okTurn()))
+    vi.stubGlobal('fetch', fetchMock)
+    const config = {
+      apiKey: 'k',
+      model: 'rz-model',
+      baseUrl: 'http://rz.example/v1',
+    }
+    await streamForProvider('rz-vllm', config, 'sys', [], [], 131072, cb())
+    await streamForProvider('rz-vllm', config, 'sys', [], [], 131072, cb())
+    expect(bodies(fetchMock).map((b) => b.max_tokens)).toEqual([131072, 115325, 131072])
+  })
+
+  it('passes per-call body extras through to the rz-vllm request', async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(okTurn()))
+    vi.stubGlobal('fetch', fetchMock)
+    const config = {
+      apiKey: 'k',
+      model: 'rz-model',
+      baseUrl: 'http://rz.example/v1',
+    }
+    await streamForProvider('rz-vllm', config, 'sys', [], [], 32768, cb(), {
+      bodyExtras: { reasoning_effort: 'none' },
+    })
+    expect(bodies(fetchMock)[0]).toMatchObject({
+      model: 'rz-model',
+      reasoning_effort: 'none',
+    })
+  })
+
+  it('disables rz-vllm thinking by default and lets a call override it', async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(okTurn()))
+    vi.stubGlobal('fetch', fetchMock)
+    const config = {
+      apiKey: 'k',
+      model: 'rz-model',
+      baseUrl: 'http://rz.example/v1',
+    }
+    await streamForProvider('rz-vllm', config, 'sys', [], [], 32768, cb())
+    await streamForProvider('rz-vllm', config, 'sys', [], [], 32768, cb(), {
+      bodyExtras: { reasoning_effort: 'low' },
+    })
+    expect(bodies(fetchMock).map((b) => b.reasoning_effort)).toEqual(['none', 'low'])
   })
 })

@@ -337,7 +337,14 @@ export const AI_PROVIDER_ADAPTERS: Record<AiProviderId, ProviderAdapter> = {
     capabilities: { auth: 'api-key', vision: true },
     resolveEndpoint(config) {
       if (!config.baseUrl) throw new Error('A rz-vllm provider requires a Base URL')
-      return { protocol: 'openai-compatible', baseUrl: normalizeBaseUrl(config.baseUrl, config.baseUrl) }
+      return {
+        protocol: 'openai-compatible',
+        baseUrl: normalizeBaseUrl(config.baseUrl, config.baseUrl),
+        // qwen3.8 ships thinking on by default and can spend thousands of tokens
+        // before the first visible delta on long document prompts; the gateway
+        // accepts 'none' alongside tools. Callers can still opt in per call.
+        bodyExtras: { reasoning_effort: 'none' },
+      }
     },
   },
   custom: {

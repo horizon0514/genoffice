@@ -9,6 +9,19 @@ export interface WorkspaceProjectLink {
   name: string
   /** Relative file paths under the workspace directory */
   files: string[]
+  /** rz-system project code (e.g. PERF-DEMO-12) */
+  projectCode?: string
+  /** rz-system project lifecycle status: created | doing | ready | done */
+  status?: string
+  /** Owning task in rz-system */
+  taskId?: string
+  taskName?: string
+  /** Deep link to the rz-system task detail page */
+  url?: string
+  ownerName?: string
+  memberNames?: string[]
+  /** Last successful sync from rz-system */
+  syncedAt?: string
 }
 
 export interface WorkspaceManifest {
@@ -19,8 +32,13 @@ export interface WorkspaceManifest {
   /** Optional rz-system import source details */
   rzSystem?: {
     baseUrl?: string
+    /** Browser URL of rz-system (may differ from the API base) */
+    webUrl?: string
+    /** dufs base URL used for rz-system attachments */
+    filesUrl?: string
     projectIds?: string[]
     importedAt?: string
+    lastSyncAt?: string
   }
   /** People participating in the workspace (stub, not enforced) */
   members: WorkspaceMember[]
@@ -28,9 +46,44 @@ export interface WorkspaceManifest {
   projects: WorkspaceProjectLink[]
 }
 
+export interface RzFileRef {
+  fileName: string
+  fileUrl: string
+}
+
+export interface RzProjectStage {
+  key: string
+  name?: string
+  files: RzFileRef[]
+  adminFiles: RzFileRef[]
+}
+
+export interface RzProjectResult {
+  key: string
+  type?: string
+  files: RzFileRef[]
+}
+
 export interface RzProject {
   id: string
   name: string
+  projectCode?: string
+  status?: string
+  client?: string
+  ownerId?: string
+  ownerName?: string
+  assistantNames?: string[]
+  taskId?: string
+  taskName?: string
+  taskStatus?: number
+  taskOwnerName?: string
+  memberNames?: string[]
+  updatedAt?: string
+  stages: RzProjectStage[]
+  finalResults: RzProjectResult[]
+  coreResults: RzProjectResult[]
+  /** Browser URL of the project's task in rz-system */
+  taskUrl?: string
 }
 
 export interface RzTask {
@@ -49,6 +102,17 @@ export interface RzSystemClient {
 export interface ImportResult {
   projects: number
   tasks: number
+}
+
+export interface RzSyncResult {
+  workspaceDir: string
+  workspaceName: string
+  projects: number
+  downloaded: number
+  skipped: number
+  failed: number
+  files: string[]
+  warnings: string[]
 }
 
 // ── P1 snapshot/sync types ────────────────────────────────────────────────────
@@ -115,5 +179,73 @@ export interface PublishResult {
   ok: boolean
   version?: string
   indexPath?: string
+  error?: string
+}
+
+// ── Handoff: project-scoped immutable exchange packages ───────────────────────
+
+export interface HandoffFileEntry {
+  /** POSIX-style path relative to the workspace root */
+  path: string
+  size: number
+  sha256: string
+}
+
+export interface HandoffManifest {
+  schema: 'genoffice-handoff@1'
+  handoffId: string
+  projectId: string
+  projectName: string
+  projectCode?: string
+  taskId?: string
+  taskUrl?: string
+  author: {
+    name: string
+    email?: string
+  }
+  note?: string
+  createdAt: string
+  files: HandoffFileEntry[]
+}
+
+export interface HandoffSummary {
+  id: string
+  /** Browser URL of the handoff folder on the file server */
+  url: string
+  projectId: string
+  authorName: string
+  authorEmail?: string
+  note?: string
+  createdAt: string
+  fileCount: number
+  totalBytes: number
+}
+
+export interface HandoffPublishResult {
+  ok: boolean
+  handoffId?: string
+  url?: string
+  fileCount?: number
+  totalBytes?: number
+  error?: string
+}
+
+export interface HandoffDiffEntry {
+  path: string
+  kind: 'new' | 'changed' | 'unchanged'
+}
+
+export interface HandoffDownloadResult {
+  ok: boolean
+  handoffId?: string
+  /** Local directory holding the downloaded handoff */
+  dir?: string
+  diff?: HandoffDiffEntry[]
+  error?: string
+}
+
+export interface HandoffApplyResult {
+  ok: boolean
+  applied: number
   error?: string
 }

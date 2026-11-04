@@ -40,7 +40,18 @@ import type {
 import type { FoundSkill, RecommendedSkill } from '../shared/found-skill'
 import type { TabsApi, TabSummary } from '../shared/tabs-api'
 import { TABS_CHANNELS } from '../shared/tabs-api'
-import type { WorkspaceApi, WorkspaceSummary, ImportOutcome } from '../shared/workspace-api'
+import type {
+  WorkspaceApi,
+  WorkspaceSummary,
+  ImportOutcome,
+  RzConnectionStatus,
+  RzProjectSummary,
+  RzSyncOutcome,
+  HandoffSummary,
+  HandoffPublishResult,
+  HandoffDownloadResult,
+  HandoffApplyResult,
+} from '../shared/workspace-api'
 import { WORKSPACE_CHANNELS } from '../shared/workspace-api'
 
 const UI_LANGUAGES: readonly UiLanguage[] = [
@@ -617,10 +628,10 @@ const homeApi: HomeApi = {
     await ipcRenderer.invoke('ai:set-settings', settings)
   },
   getAiProviders() {
-    return AI_PROVIDERS.map((meta) => {
-      let defaultBaseUrl = ''
-      // genspark routes by model and custom has no default — both stay ''
-      if (meta.id !== 'genspark' && !meta.needsBaseUrl && !meta.needsCliPath) {
+    return AI_PROVIDERS.filter((meta) => !meta.hidden).map((meta) => {
+      let defaultBaseUrl = meta.defaultBaseUrl ?? ''
+      // model-routed and user-hosted providers keep their own base URL logic
+      if (!meta.needsBaseUrl && !meta.needsCliPath) {
         defaultBaseUrl = getProviderAdapter(meta.id).resolveEndpoint({
           apiKey: '',
           model: meta.defaultModel,
@@ -911,6 +922,88 @@ const workspaceApi: WorkspaceApi = {
       ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
     }
   },
+  async rzStatus() {
+    const r: unknown = await ipcRenderer.invoke(WORKSPACE_CHANNELS.rzStatus)
+    const raw = (r ?? {}) as Partial<RzConnectionStatus>
+    return {
+      configured: raw.configured === true,
+      connected: raw.connected === true,
+      ...(typeof raw.baseUrl === 'string' ? { baseUrl: raw.baseUrl } : {}),
+      ...(typeof raw.webUrl === 'string' ? { webUrl: raw.webUrl } : {}),
+      ...(typeof raw.filesUrl === 'string' ? { filesUrl: raw.filesUrl } : {}),
+      ...(typeof raw.email === 'string' ? { email: raw.email } : {}),
+      ...(typeof raw.name === 'string' ? { name: raw.name } : {}),
+      ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+    }
+  },
+  async rzConfigure(input) {
+    const r: unknown = await ipcRenderer.invoke(WORKSPACE_CHANNELS.rzConfigure, input)
+    const raw = (r ?? {}) as Partial<RzConnectionStatus>
+    return {
+      configured: raw.configured === true,
+      connected: raw.connected === true,
+      ...(typeof raw.baseUrl === 'string' ? { baseUrl: raw.baseUrl } : {}),
+      ...(typeof raw.webUrl === 'string' ? { webUrl: raw.webUrl } : {}),
+      ...(typeof raw.filesUrl === 'string' ? { filesUrl: raw.filesUrl } : {}),
+      ...(typeof raw.email === 'string' ? { email: raw.email } : {}),
+      ...(typeof raw.name === 'string' ? { name: raw.name } : {}),
+      ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+    }
+  },
+  async rzLogout() {
+    const r: unknown = await ipcRenderer.invoke(WORKSPACE_CHANNELS.rzLogout)
+    const raw = (r ?? {}) as Partial<RzConnectionStatus>
+    return {
+      configured: raw.configured === true,
+      connected: raw.connected === true,
+      ...(typeof raw.baseUrl === 'string' ? { baseUrl: raw.baseUrl } : {}),
+      ...(typeof raw.webUrl === 'string' ? { webUrl: raw.webUrl } : {}),
+      ...(typeof raw.filesUrl === 'string' ? { filesUrl: raw.filesUrl } : {}),
+      ...(typeof raw.email === 'string' ? { email: raw.email } : {}),
+      ...(typeof raw.name === 'string' ? { name: raw.name } : {}),
+      ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+    }
+  },
+  async rzProjects() {
+    const r: unknown = await ipcRenderer.invoke(WORKSPACE_CHANNELS.rzProjects)
+    const raw = (r ?? {}) as { ok?: unknown; projects?: unknown; error?: unknown }
+    return {
+      ok: raw.ok === true,
+      projects: Array.isArray(raw.projects) ? (raw.projects as RzProjectSummary[]) : [],
+      ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+    }
+  },
+  async rzWorkspaces() {
+    const r: unknown = await ipcRenderer.invoke(WORKSPACE_CHANNELS.rzWorkspaces)
+    return Array.isArray(r)
+      ? r.filter(
+          (workspace): workspace is WorkspaceSummary =>
+            !!workspace &&
+            typeof workspace === 'object' &&
+            typeof (workspace as WorkspaceSummary).dir === 'string',
+        )
+      : []
+  },
+  async rzSync(projectId, mode) {
+    const r: unknown = await ipcRenderer.invoke(WORKSPACE_CHANNELS.rzSync, projectId, mode)
+    const raw = (r ?? {}) as Partial<RzSyncOutcome>
+    return {
+      ok: raw.ok === true,
+      mode: raw.mode === 'current' ? 'current' : 'new',
+      ...(raw.workspace ? { workspace: raw.workspace } : {}),
+      downloaded: typeof raw.downloaded === 'number' ? raw.downloaded : 0,
+      skipped: typeof raw.skipped === 'number' ? raw.skipped : 0,
+      failed: typeof raw.failed === 'number' ? raw.failed : 0,
+      warnings: Array.isArray(raw.warnings)
+        ? raw.warnings.filter((w): w is string => typeof w === 'string')
+        : [],
+      ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+    }
+  },
+  async openUrl(url) {
+    const r: unknown = await ipcRenderer.invoke(WORKSPACE_CHANNELS.openUrl, url)
+    return r === true
+  },
   async publish() {
     const r: unknown = await ipcRenderer.invoke(WORKSPACE_CHANNELS.publish)
     const raw = (r ?? {}) as { ok?: unknown; version?: unknown; error?: unknown }
@@ -940,6 +1033,61 @@ const workspaceApi: WorkspaceApi = {
   async apply(paths) {
     const r: unknown = await ipcRenderer.invoke(WORKSPACE_CHANNELS.apply, paths)
     const raw = (r ?? {}) as { ok?: unknown; applied?: unknown; error?: unknown }
+    return {
+      ok: raw.ok === true,
+      applied: typeof raw.applied === 'number' ? raw.applied : 0,
+      ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+    }
+  },
+  async handoffList(projectId) {
+    const r: unknown = await ipcRenderer.invoke(WORKSPACE_CHANNELS.handoffList, projectId)
+    const raw = (r ?? {}) as { ok?: unknown; handoffs?: unknown; error?: unknown }
+    return {
+      ok: raw.ok === true,
+      handoffs: Array.isArray(raw.handoffs) ? (raw.handoffs as HandoffSummary[]) : [],
+      ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+    }
+  },
+  async handoffPublish(workspaceDir, note) {
+    const r: unknown = await ipcRenderer.invoke(
+      WORKSPACE_CHANNELS.handoffPublish,
+      workspaceDir,
+      note,
+    )
+    const raw = (r ?? {}) as Partial<HandoffPublishResult>
+    return {
+      ok: raw.ok === true,
+      ...(typeof raw.handoffId === 'string' ? { handoffId: raw.handoffId } : {}),
+      ...(typeof raw.url === 'string' ? { url: raw.url } : {}),
+      ...(typeof raw.fileCount === 'number' ? { fileCount: raw.fileCount } : {}),
+      ...(typeof raw.totalBytes === 'number' ? { totalBytes: raw.totalBytes } : {}),
+      ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+    }
+  },
+  async handoffDownload(workspaceDir, projectId, handoffId) {
+    const r: unknown = await ipcRenderer.invoke(
+      WORKSPACE_CHANNELS.handoffDownload,
+      workspaceDir,
+      projectId,
+      handoffId,
+    )
+    const raw = (r ?? {}) as Partial<HandoffDownloadResult>
+    return {
+      ok: raw.ok === true,
+      ...(typeof raw.handoffId === 'string' ? { handoffId: raw.handoffId } : {}),
+      ...(typeof raw.dir === 'string' ? { dir: raw.dir } : {}),
+      ...(Array.isArray(raw.diff) ? { diff: raw.diff } : {}),
+      ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+    }
+  },
+  async handoffApply(workspaceDir, handoffId, paths) {
+    const r: unknown = await ipcRenderer.invoke(
+      WORKSPACE_CHANNELS.handoffApply,
+      workspaceDir,
+      handoffId,
+      paths,
+    )
+    const raw = (r ?? {}) as Partial<HandoffApplyResult>
     return {
       ok: raw.ok === true,
       applied: typeof raw.applied === 'number' ? raw.applied : 0,

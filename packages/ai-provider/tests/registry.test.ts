@@ -241,6 +241,7 @@ describe('provider registry', () => {
     expect(endpoint).toEqual({
       protocol: 'openai-compatible',
       baseUrl: 'http://10.0.0.5:8000/v1',
+      bodyExtras: { reasoning_effort: 'none' },
     })
   })
 

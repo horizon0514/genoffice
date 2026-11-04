@@ -9,7 +9,7 @@
  *
  * This module resolves the provider the way the rest of the app does: the
  * shared `resolveAiSettings` + `activeProvider` from `@genoffice/ai-provider`,
- * the Genspark key from the gsk login state, and a custom endpoint's
+ * a legacy Genspark key from the gsk login state, and a custom endpoint's
  * credential reference resolved from the environment.
  */
 import type { AiProviderConfig, AiProviderId } from '@genoffice/ai-provider'
@@ -37,7 +37,7 @@ export interface NamingProvider {
 export function resolveNamingProvider(stored: unknown, gskKey: string): NamingProvider | null {
   const settings = resolveAiSettings(stored, defaultAiSettings())
   // a stored BYOK provider is honored when usable; a half-filled one falls back
-  // to genspark rather than silently disabling AI
+  // to the shipped default rather than silently disabling AI
   settings.provider = activeProvider(settings)
   const provider = settings.provider
   const storedConfig = settings.providers?.[provider]

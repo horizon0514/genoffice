@@ -39,13 +39,8 @@ import type {
 } from '@genoffice/ai-provider'
 import { useI18n } from './locale'
 import type { StringKey, TFunc } from './locale'
-import type {
-  AccountStatus,
-  AiCatalogEntry,
-  AuthorNameSetting,
-  DocTheme,
-  UiTheme,
-} from '../../shared/home-api'
+import type { AiCatalogEntry, AuthorNameSetting, DocTheme, UiTheme } from '../../shared/home-api'
+import type { RzConnectionStatus } from '../../shared/workspace-api'
 import { ProviderLogo } from './provider-logos'
 import { IntegrationsPane, skillUpdateDue } from './IntegrationsPane'
 import { FoundSkills } from './FoundSkills'
@@ -804,7 +799,9 @@ function AiModelPane({ t }: { t: TFunc }) {
               className="set-input"
               type="text"
               value={config.baseUrl ?? ''}
-              placeholder={meta?.needsBaseUrl ? 'https://…/v1' : meta?.defaultBaseUrl}
+              placeholder={
+                meta?.needsBaseUrl ? meta.defaultBaseUrl || 'https://…/v1' : meta?.defaultBaseUrl
+              }
               spellCheck={false}
               onChange={(e) => updateConfig({ baseUrl: e.target.value.trim() })}
             />
@@ -1716,22 +1713,222 @@ function AiStatusPill({ status }: { status: AiStatus | null }) {
   )
 }
 
+/** rz-system account pane: connection status, login form, and session logout. */
+function RzAccountPane({
+  initialStatus,
+  onStatusChange,
+}: {
+  initialStatus?: RzConnectionStatus | null
+  onStatusChange?: (status: RzConnectionStatus | null) => void
+}) {
+  const [status, setStatus] = useState<RzConnectionStatus | null>(initialStatus ?? null)
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState<'connect' | 'logout' | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [form, setForm] = useState({
+    baseUrl: initialStatus?.baseUrl ?? 'http://192.168.2.99:3000',
+    webUrl: initialStatus?.webUrl ?? '',
+    filesUrl: initialStatus?.filesUrl ?? 'http://192.168.1.99:5100',
+    email: initialStatus?.email ?? '',
+    password: '',
+  })
+
+  useEffect(() => {
+    const api = window.workspaceApi
+    if (!api) {
+      setLoading(false)
+      setError('Workspace bridge 不可用')
+      return
+    }
+    let cancelled = false
+    void api
+      .rzStatus()
+      .then((next) => {
+        if (cancelled) return
+        setStatus(next)
+        setError(next.connected ? null : (next.error ?? null))
+        setForm((prev) => ({
+          ...prev,
+          baseUrl: next.baseUrl ?? prev.baseUrl,
+          webUrl: next.webUrl ?? prev.webUrl,
+          filesUrl: next.filesUrl ?? prev.filesUrl,
+          email: next.email ?? prev.email,
+        }))
+        onStatusChange?.(next)
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [onStatusChange])
+
+  const connected = status?.connected === true
+
+  const connect = async () => {
+    const api = window.workspaceApi
+    if (!api) return
+    setBusy('connect')
+    setError(null)
+    try {
+      const next = await api.rzConfigure({
+        baseUrl: form.baseUrl,
+        ...(form.webUrl.trim() ? { webUrl: form.webUrl.trim() } : {}),
+        ...(form.filesUrl.trim() ? { filesUrl: form.filesUrl.trim() } : {}),
+        email: form.email,
+        password: form.password,
+      })
+      setStatus(next)
+      onStatusChange?.(next)
+      if (!next.connected) {
+        setError(next.error ?? '连接失败')
+        return
+      }
+      setForm((prev) => ({ ...prev, password: '' }))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const logout = async () => {
+    const api = window.workspaceApi
+    if (!api) return
+    setBusy('logout')
+    setError(null)
+    try {
+      const next = await api.rzLogout()
+      setStatus(next)
+      onStatusChange?.(next)
+      if (next.connected) setError('当前连接由环境变量管理，无法在设置中退出。')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <>
+      <h3 className="set-pane-title">rz-system 登录</h3>
+      <div className="set-rz-hero">
+        <span className="set-rz-mark" aria-hidden="true">
+          RZ
+        </span>
+        <div className="set-rz-hero-text">
+          <span className="set-rz-hero-title">rz-system</span>
+          <span className="set-rz-hero-desc">
+            登录后即可读取项目列表，并把过程资料、审核稿和归档材料同步到本地工作空间。
+          </span>
+        </div>
+        <span className={`set-rz-state${connected ? ' online' : ''}`}>
+          <span className={`set-rz-dot${connected ? ' online' : ''}`} />
+          {loading ? '检查中…' : connected ? '已连接' : '未登录'}
+        </span>
+      </div>
+
+      {connected ? (
+        <>
+          <Field label="当前账号" value={status?.email || '—'} />
+          <Field label="显示名称" value={status?.name || '—'} />
+          <Field label="服务地址" value={status?.baseUrl || '—'} />
+          <Field label="附件服务" value={status?.filesUrl || '—'} />
+          <div className="set-rz-actions">
+            <span className="set-rz-hint">登录会话只保存在本机，密码不会被保存。</span>
+            <button
+              className="set-btn danger"
+              disabled={busy === 'logout'}
+              onClick={() => void logout()}
+            >
+              {busy === 'logout' ? '正在退出…' : '退出登录'}
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="set-rz-form">
+            <label className="set-rz-form-field">
+              <span>rz-system 地址</span>
+              <input
+                className="set-rz-input"
+                value={form.baseUrl}
+                placeholder="http://192.168.2.99:3000"
+                spellCheck={false}
+                onChange={(event) => setForm({ ...form, baseUrl: event.target.value })}
+              />
+            </label>
+            <label className="set-rz-form-field">
+              <span>附件服务地址（dufs）</span>
+              <input
+                className="set-rz-input"
+                value={form.filesUrl}
+                placeholder="http://192.168.1.99:5100"
+                spellCheck={false}
+                onChange={(event) => setForm({ ...form, filesUrl: event.target.value })}
+              />
+            </label>
+            <label className="set-rz-form-field">
+              <span>账号</span>
+              <input
+                className="set-rz-input"
+                value={form.email}
+                placeholder="admin"
+                autoComplete="username"
+                spellCheck={false}
+                onChange={(event) => setForm({ ...form, email: event.target.value })}
+              />
+            </label>
+            <label className="set-rz-form-field">
+              <span>密码</span>
+              <input
+                className="set-rz-input"
+                type="password"
+                value={form.password}
+                placeholder="仅本次登录使用，不会保存"
+                autoComplete="current-password"
+                onChange={(event) => setForm({ ...form, password: event.target.value })}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void connect()
+                }}
+              />
+            </label>
+          </div>
+          {error && (
+            <div className="set-rz-error" role="alert">
+              {error}
+            </div>
+          )}
+          <div className="set-rz-actions">
+            <span className="set-rz-hint">登录成功后只保存会话 cookie，不保存密码。</span>
+            <button
+              className="set-btn rz-primary"
+              disabled={
+                busy === 'connect' || !form.baseUrl.trim() || !form.email.trim() || !form.password
+              }
+              onClick={() => void connect()}
+            >
+              {busy === 'connect' ? '连接中…' : '连接 rz-system'}
+            </button>
+          </div>
+        </>
+      )}
+    </>
+  )
+}
+
 export interface SettingsModalProps {
-  status: AccountStatus | null
-  loggingOut: boolean
-  /** browser sign-in in progress (spinner shows on the account entry) */
-  loginWaiting: boolean
-  /** device auth URL while waiting — rescue actions when the browser did not auto-open */
-  loginUrl: string | null
-  urlCopied: boolean
-  onOpenLoginUrl: () => void
-  onCopyLoginUrl: () => void
+  /** last known rz-system connection state, shown before the pane refreshes it */
+  rzStatus?: RzConnectionStatus | null
   onClose: () => void
   /** the decision-model search settings were saved; the home search re-judges or drops its current order */
   onFileSearchChange?: () => void
-  /** closes the modal and launches the Genspark login flow (progress shows on the account entry) */
-  onLogin: () => void
-  onLogout: () => void
+  /** the rz-system session changed from inside the account pane */
+  onRzStatusChange?: (status: RzConnectionStatus | null) => void
   /** an installed skill is older than the bundled one: dot on the Integrations entry */
   skillUpdateDue?: boolean
   onSkillUpdateDue?: (due: boolean) => void
@@ -1740,17 +1937,10 @@ export interface SettingsModalProps {
 }
 
 export function SettingsModal({
-  status,
-  loggingOut,
-  loginWaiting,
-  loginUrl,
-  urlCopied,
-  onOpenLoginUrl,
-  onCopyLoginUrl,
+  rzStatus,
   onClose,
   onFileSearchChange,
-  onLogin,
-  onLogout,
+  onRzStatusChange,
   skillUpdateDue: updateDue = false,
   onSkillUpdateDue,
   target,
@@ -1910,9 +2100,6 @@ export function SettingsModal({
     return t('setDefaultAppDesc')
   })()
 
-  const loggedIn = status?.loggedIn ?? false
-  const email = status?.email ?? ''
-
   return (
     <div
       className="set-overlay"
@@ -1953,52 +2140,7 @@ export function SettingsModal({
           </nav>
           <div className={'set-pane' + (section === 'aiModel' ? ' set-pane-ai-model' : '')}>
             {section === 'account' && (
-              <>
-                <h3 className="set-pane-title">{t('setSecAccount')}</h3>
-                <Field label={t('setEmail')} value={loggedIn ? email : t('setNotLoggedIn')} />
-                {loggedIn && (
-                  <Field
-                    label={t('credits')}
-                    value={
-                      status?.creditBalance === undefined
-                        ? '—'
-                        : Math.floor(status.creditBalance).toLocaleString('en-US')
-                    }
-                    action={
-                      <button
-                        className="set-btn"
-                        data-tip={t('creditsTip')}
-                        onClick={() => void window.aiOffice.openCreditUsage?.()}
-                      >
-                        {t('setViewUsage')}
-                      </button>
-                    }
-                  />
-                )}
-                <div className="set-pane-footer">
-                  {loggedIn ? (
-                    <button className="set-btn danger" disabled={loggingOut} onClick={onLogout}>
-                      {loggingOut ? t('loggingOut') : t('logout')}
-                    </button>
-                  ) : (
-                    <>
-                      {loginWaiting && loginUrl && (
-                        <>
-                          <button className="set-btn" onClick={onOpenLoginUrl}>
-                            {t('loginOpenManually')}
-                          </button>
-                          <button className="set-btn" onClick={onCopyLoginUrl}>
-                            {urlCopied ? t('loginCopied') : t('loginCopyUrl')}
-                          </button>
-                        </>
-                      )}
-                      <button className="set-btn primary" onClick={onLogin}>
-                        {loginWaiting ? t('waitingShort') : t('loginGenspark')}
-                      </button>
-                    </>
-                  )}
-                </div>
-              </>
+              <RzAccountPane initialStatus={rzStatus} onStatusChange={onRzStatusChange} />
             )}
             {section === 'aiModel' && <AiModelPane t={t} />}
             {section === 'aiMedia' && (

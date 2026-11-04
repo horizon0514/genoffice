@@ -303,18 +303,35 @@ import type {
   FileSearchSettings,
 } from '../shared/home-api'
 import { HOME_CHANNELS } from '../shared/home-api'
-import { WORKSPACE_CHANNELS, type WorkspaceSummary } from '../shared/workspace-api'
+import {
+  WORKSPACE_CHANNELS,
+  type WorkspaceSummary,
+  type RzConnectionStatus,
+  type RzConfigureInput,
+  type RzProjectSummary,
+  type RzSyncOutcome,
+  type HandoffSummary,
+  type HandoffPublishResult,
+  type HandoffDownloadResult,
+  type HandoffApplyResult,
+} from '../shared/workspace-api'
 import {
   initWorkspace as wsInit,
   loadWorkspace as wsLoad,
   importRzSystemIntoWorkspace,
   HttpRzClient,
-  FixtureRzClient,
+  syncRzProjectsToWorkspace,
+  workspaceDirNameForProject,
+  type RzProject,
 } from '@genoffice/workspace-store'
 import {
   publishSnapshotToDufs,
   pullLatestSnapshotFromDufs,
   applySelectedFromMirror,
+  publishHandoff,
+  listHandoffs,
+  downloadHandoff,
+  applyHandoff,
 } from '@genoffice/workspace-store'
 import {
   normalizeAiPanelPrefs,
@@ -5611,16 +5628,217 @@ function registerHomeIpc(): void {
         name: m.name,
         createdAt: m.createdAt,
         updatedAt: m.updatedAt,
+        ...(m.rzSystem ? { rzSystem: m.rzSystem } : {}),
         projects: m.projects.map((p) => ({
           id: p.id,
           name: p.name,
           fileCount: p.files.length,
+          ...(p.projectCode ? { projectCode: p.projectCode } : {}),
+          ...(p.status ? { status: p.status } : {}),
+          ...(p.taskId ? { taskId: p.taskId } : {}),
+          ...(p.taskName ? { taskName: p.taskName } : {}),
+          ...(p.ownerName ? { ownerName: p.ownerName } : {}),
+          ...(p.url ? { url: p.url } : {}),
+          ...(p.memberNames ? { memberNames: p.memberNames } : {}),
+          ...(p.syncedAt ? { syncedAt: p.syncedAt } : {}),
         })),
       }
     } catch {
       return null
     }
   }
+
+  function listRzWorkspaceSummaries(): WorkspaceSummary[] {
+    const candidates = new Set<string>()
+    const addCandidate = (dir: string | null | undefined) => {
+      if (!dir) return
+      const resolved = resolve(dir)
+      if (existsSync(join(resolved, '.genoffice', 'workspace.json'))) candidates.add(resolved)
+    }
+
+    for (const root of folderRootPaths()) {
+      addCandidate(root)
+      try {
+        for (const entry of readdirSync(root, { withFileTypes: true })) {
+          if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+          addCandidate(join(root, entry.name))
+        }
+      } catch {
+        // a missing or unreadable root is skipped; other roots may still be usable
+      }
+    }
+    addCandidate(readLastWorkspaceDir())
+
+    const timeOf = (iso: string | undefined): number => {
+      const time = iso ? Date.parse(iso) : NaN
+      return Number.isFinite(time) ? time : 0
+    }
+
+    return [...candidates]
+      .map(summarizeWorkspace)
+      .filter(
+        (workspace): workspace is WorkspaceSummary =>
+          workspace !== null && (workspace.rzSystem?.projectIds?.length ?? 0) > 0,
+      )
+      .sort((a, b) => {
+        const syncDelta = timeOf(b.rzSystem?.lastSyncAt) - timeOf(a.rzSystem?.lastSyncAt)
+        return syncDelta !== 0 ? syncDelta : timeOf(b.updatedAt) - timeOf(a.updatedAt)
+      })
+  }
+
+  // ── rz-system connection ──────────────────────────────────────────────────
+  const RZ_CONFIG_KEY = 'rzSystemConfig'
+  interface RzStoredConfig {
+    baseUrl?: string
+    webUrl?: string
+    filesUrl?: string
+    email?: string
+    name?: string
+    sessionCookie?: string
+  }
+  interface RzResolvedConfig extends RzStoredConfig {
+    password?: string
+  }
+
+  function rzEnv(...names: string[]): string | undefined {
+    for (const name of names) {
+      const value = process.env[name]
+      if (typeof value === 'string' && value.trim()) return value.trim()
+    }
+    return undefined
+  }
+
+  function readStoredRzConfig(): RzStoredConfig {
+    const raw = readAppSettings(APP_SETTINGS_PATH())[RZ_CONFIG_KEY]
+    if (!raw || typeof raw !== 'object') return {}
+    const value = raw as Record<string, unknown>
+    const out: RzStoredConfig = {}
+    for (const key of [
+      'baseUrl',
+      'webUrl',
+      'filesUrl',
+      'email',
+      'name',
+      'sessionCookie',
+    ] as const) {
+      const v = value[key]
+      if (typeof v === 'string' && v.trim()) out[key] = v.trim()
+    }
+    return out
+  }
+
+  function writeStoredRzConfig(next: RzStoredConfig): void {
+    writeAppSetting(APP_SETTINGS_PATH(), RZ_CONFIG_KEY, next)
+  }
+
+  function resolveRzConfig(): RzResolvedConfig {
+    const stored = readStoredRzConfig()
+    const baseUrl = rzEnv('RZ_SYSTEM_BASE_URL', 'RZ_API_BASE_URL') ?? stored.baseUrl
+    const webUrl = rzEnv('RZ_SYSTEM_WEB_URL') ?? stored.webUrl
+    const filesUrl = rzEnv('RZ_SYSTEM_FILES_URL', 'RZ_UPLOAD_BASE_URL') ?? stored.filesUrl
+    const email = rzEnv('RZ_SYSTEM_EMAIL', 'RZ_API_USER') ?? stored.email
+    const name = stored.name
+    const password = rzEnv('RZ_SYSTEM_PASSWORD', 'RZ_API_PASSWORD')
+    const sessionCookie = rzEnv('RZ_SYSTEM_SESSION_COOKIE') ?? stored.sessionCookie
+    return {
+      ...(baseUrl ? { baseUrl } : {}),
+      ...(webUrl ? { webUrl } : {}),
+      ...(filesUrl ? { filesUrl } : {}),
+      ...(email ? { email } : {}),
+      ...(name ? { name } : {}),
+      ...(password ? { password } : {}),
+      ...(sessionCookie ? { sessionCookie } : {}),
+    }
+  }
+
+  function normalizeRzUrl(raw: string): string | undefined {
+    const value = raw.trim()
+    if (!value) return undefined
+    const withScheme = /^https?:\/\//i.test(value) ? value : `http://${value}`
+    try {
+      const url = new URL(withScheme)
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined
+      return `${url.origin}${url.pathname}`.replace(/\/+$/, '')
+    } catch {
+      return undefined
+    }
+  }
+
+  function makeRzClient(config: RzResolvedConfig): HttpRzClient {
+    if (!config.baseUrl) throw new Error('rz-system 未配置服务地址')
+    return new HttpRzClient({
+      baseUrl: config.baseUrl,
+      webUrl: config.webUrl,
+      email: config.email,
+      password: config.password,
+      sessionCookie: config.sessionCookie,
+    })
+  }
+
+  function persistRzSession(config: RzResolvedConfig, client: HttpRzClient, name?: string): void {
+    const cookie = client.getSessionCookie()
+    if (!cookie) return
+    writeStoredRzConfig({
+      ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
+      ...(config.webUrl ? { webUrl: config.webUrl } : {}),
+      ...(config.filesUrl ? { filesUrl: config.filesUrl } : {}),
+      ...(config.email ? { email: config.email } : {}),
+      ...(name ? { name } : {}),
+      sessionCookie: cookie,
+    })
+  }
+
+  function rzStatusOf(config: RzResolvedConfig): RzConnectionStatus {
+    return {
+      configured: !!config.baseUrl,
+      connected: false,
+      ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
+      ...(config.webUrl ? { webUrl: config.webUrl } : {}),
+      ...(config.filesUrl ? { filesUrl: config.filesUrl } : {}),
+      ...(config.email ? { email: config.email } : {}),
+      ...(config.name ? { name: config.name } : {}),
+      ...(!config.baseUrl ? { error: '还没有配置 rz-system 地址（请在设置 → 账户中填写）' } : {}),
+    }
+  }
+
+  function summarizeRzProject(project: RzProject): RzProjectSummary {
+    const fileCount =
+      project.stages.reduce((n, s) => n + s.files.length + s.adminFiles.length, 0) +
+      project.finalResults.reduce((n, r) => n + r.files.length, 0) +
+      project.coreResults.reduce((n, r) => n + r.files.length, 0)
+    return {
+      id: project.id,
+      name: project.name,
+      fileCount,
+      ...(project.projectCode ? { projectCode: project.projectCode } : {}),
+      ...(project.status ? { status: project.status } : {}),
+      ...(project.taskId ? { taskId: project.taskId } : {}),
+      ...(project.taskName ? { taskName: project.taskName } : {}),
+      ...(project.taskOwnerName ? { taskOwnerName: project.taskOwnerName } : {}),
+      ...(project.ownerName ? { ownerName: project.ownerName } : {}),
+      ...(project.memberNames ? { memberNames: project.memberNames } : {}),
+      ...(project.client ? { client: project.client } : {}),
+      ...(project.updatedAt ? { updatedAt: project.updatedAt } : {}),
+      ...(project.taskUrl ? { taskUrl: project.taskUrl } : {}),
+    }
+  }
+
+  function uniqueWorkspaceDir(parent: string, base: string): string {
+    const first = join(parent, base)
+    if (!existsSync(first)) return first
+    if (existsSync(join(first, '.genoffice', 'workspace.json'))) return first
+    try {
+      if (readdirSync(first).length === 0) return first
+    } catch {
+      // fall through to a suffixed name
+    }
+    for (let i = 2; i < 100; i += 1) {
+      const candidate = join(parent, `${base}-${i}`)
+      if (!existsSync(candidate)) return candidate
+    }
+    return join(parent, `${base}-${Date.now()}`)
+  }
+
   ipcMain.handle(WORKSPACE_CHANNELS.get, () => {
     const dir = readLastWorkspaceDir()
     return dir ? summarizeWorkspace(dir) : null
@@ -5644,104 +5862,434 @@ function registerHomeIpc(): void {
     }
     return summarizeWorkspace(picked)
   })
-  ipcMain.handle(WORKSPACE_CHANNELS.importRz, async (): Promise<{
-    ok: boolean
-    projects: number
-    tasks: number
-    error?: string
-  }> => {
-    const dir = readLastWorkspaceDir()
-    if (!dir) return { ok: false, projects: 0, tasks: 0, error: 'No workspace selected' }
-    try {
-      // prefer env-provided HTTP client, else fall back to bundled fixtures
-      const base = process.env.RZ_API_BASE_URL
-      const token = process.env.RZ_API_TOKEN
-      const client =
-        typeof base === 'string' && base && typeof token === 'string' && token
-          ? new HttpRzClient(base, token)
-          : new FixtureRzClient(resolve(__dirname, '../../..', 'packages/workspace-store/fixtures/rz'))
-      const res = await importRzSystemIntoWorkspace({ workspaceDir: dir, client })
-      return { ok: true, projects: res.projects, tasks: res.tasks }
-    } catch (err) {
-      return { ok: false, projects: 0, tasks: 0, error: err instanceof Error ? err.message : String(err) }
-    }
-  })
+  ipcMain.handle(
+    WORKSPACE_CHANNELS.importRz,
+    async (): Promise<{
+      ok: boolean
+      projects: number
+      tasks: number
+      error?: string
+    }> => {
+      const dir = readLastWorkspaceDir()
+      if (!dir) return { ok: false, projects: 0, tasks: 0, error: 'No workspace selected' }
+      try {
+        const config = resolveRzConfig()
+        const client = makeRzClient(config)
+        const user = await client.ensureAuthenticated()
+        persistRzSession(config, client, user.name)
+        const res = await importRzSystemIntoWorkspace({ workspaceDir: dir, client })
+        return { ok: true, projects: res.projects, tasks: res.tasks }
+      } catch (err) {
+        return {
+          ok: false,
+          projects: 0,
+          tasks: 0,
+          error: err instanceof Error ? err.message : String(err),
+        }
+      }
+    },
+  )
 
-  ipcMain.handle(WORKSPACE_CHANNELS.publish, async (): Promise<{
-    ok: boolean
-    version?: string
-    error?: string
-  }> => {
-    const dir = readLastWorkspaceDir()
-    if (!dir) return { ok: false, error: 'No workspace selected' }
-    const baseUrl = process.env.GENOFFICE_SYNC_BASE_URL
-    if (typeof baseUrl !== 'string' || !baseUrl.trim())
-      return { ok: false, error: 'GENOFFICE_SYNC_BASE_URL is not set' }
+  ipcMain.handle(WORKSPACE_CHANNELS.rzStatus, async (): Promise<RzConnectionStatus> => {
+    const config = resolveRzConfig()
+    if (!config.baseUrl) return rzStatusOf(config)
     try {
-      const auth =
-        typeof process.env.GENOFFICE_SYNC_USER === 'string' && process.env.GENOFFICE_SYNC_USER
-          ? {
-              user: process.env.GENOFFICE_SYNC_USER,
-              password: process.env.GENOFFICE_SYNC_PASSWORD ?? '',
-            }
-          : undefined
-      const res = await publishSnapshotToDufs({ workspaceDir: dir, baseUrl, auth })
-      return res
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  })
-
-  ipcMain.handle(WORKSPACE_CHANNELS.pull, async (): Promise<{
-    ok: boolean
-    version?: string
-    mirrorDir?: string
-    diff?: Array<{ kind: 'new' | 'changed' | 'unchanged' | 'deleted'; path: string }>
-    error?: string
-  }> => {
-    const dir = readLastWorkspaceDir()
-    if (!dir) return { ok: false, error: 'No workspace selected' }
-    const baseUrl = process.env.GENOFFICE_SYNC_BASE_URL
-    if (typeof baseUrl !== 'string' || !baseUrl.trim())
-      return { ok: false, error: 'GENOFFICE_SYNC_BASE_URL is not set' }
-    try {
-      const auth =
-        typeof process.env.GENOFFICE_SYNC_USER === 'string' && process.env.GENOFFICE_SYNC_USER
-          ? {
-              user: process.env.GENOFFICE_SYNC_USER,
-              password: process.env.GENOFFICE_SYNC_PASSWORD ?? '',
-            }
-          : undefined
-      const res = await pullLatestSnapshotFromDufs({ workspaceDir: dir, baseUrl, auth })
-      // keep only minimal diff shape for the renderer
+      const client = makeRzClient(config)
+      const user = await client.ensureAuthenticated()
+      persistRzSession(config, client, user.name)
       return {
-        ok: res.ok,
-        version: res.version,
-        mirrorDir: res.mirrorDir,
-        diff: (res.diff ?? []).map((d) => ({ kind: d.kind, path: d.path })),
-        ...(res.error ? { error: res.error } : {}),
+        ...rzStatusOf(config),
+        connected: true,
+        email: user.email,
+        name: user.name,
       }
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      return {
+        ...rzStatusOf(config),
+        error: err instanceof Error ? err.message : String(err),
+      }
     }
   })
 
-  ipcMain.handle(WORKSPACE_CHANNELS.apply, async (_event, paths: unknown): Promise<{
-    ok: boolean
-    applied: number
-    error?: string
-  }> => {
-    const dir = readLastWorkspaceDir()
-    if (!dir) return { ok: false, applied: 0, error: 'No workspace selected' }
-    const list = Array.isArray(paths) ? (paths.filter((p) => typeof p === 'string') as string[]) : []
-    if (list.length === 0) return { ok: false, applied: 0, error: 'No files selected' }
+  ipcMain.handle(
+    WORKSPACE_CHANNELS.rzConfigure,
+    async (_event, input: RzConfigureInput): Promise<RzConnectionStatus> => {
+      const rawBaseUrl = typeof input?.baseUrl === 'string' ? input.baseUrl.trim() : ''
+      const rawWebUrl = typeof input?.webUrl === 'string' ? input.webUrl.trim() : ''
+      const rawFilesUrl = typeof input?.filesUrl === 'string' ? input.filesUrl.trim() : ''
+      const email = typeof input?.email === 'string' ? input.email.trim() : ''
+      const password = typeof input?.password === 'string' ? input.password : ''
+      if (!rawBaseUrl)
+        return { configured: false, connected: false, error: '请填写 rz-system 地址' }
+      if (!email || !password) {
+        return { configured: true, connected: false, error: '请填写账号和密码' }
+      }
+      try {
+        const baseUrl = normalizeRzUrl(rawBaseUrl)
+        if (!baseUrl) throw new Error('rz-system 地址格式不正确')
+        const webUrl = rawWebUrl ? normalizeRzUrl(rawWebUrl) : baseUrl
+        const filesUrl = rawFilesUrl ? normalizeRzUrl(rawFilesUrl) : undefined
+        const config: RzResolvedConfig = {
+          baseUrl,
+          ...(webUrl ? { webUrl } : {}),
+          ...(filesUrl ? { filesUrl } : {}),
+          email,
+          password,
+        }
+        const client = makeRzClient(config)
+        const user = await client.login()
+        persistRzSession(config, client, user.name)
+        return {
+          configured: true,
+          connected: true,
+          baseUrl,
+          ...(webUrl ? { webUrl } : {}),
+          ...(filesUrl ? { filesUrl } : {}),
+          email: user.email,
+          name: user.name,
+        }
+      } catch (err) {
+        return {
+          configured: true,
+          connected: false,
+          error: err instanceof Error ? err.message : String(err),
+        }
+      }
+    },
+  )
+
+  ipcMain.handle(WORKSPACE_CHANNELS.rzLogout, async (): Promise<RzConnectionStatus> => {
+    const stored = readStoredRzConfig()
+    const { sessionCookie: _sessionCookie, ...rest } = stored
+    writeStoredRzConfig(rest)
+    return rzStatusOf(resolveRzConfig())
+  })
+
+  ipcMain.handle(
+    WORKSPACE_CHANNELS.rzProjects,
+    async (): Promise<{ ok: boolean; projects: RzProjectSummary[]; error?: string }> => {
+      const config = resolveRzConfig()
+      if (!config.baseUrl) {
+        return { ok: false, projects: [], error: 'rz-system 未配置' }
+      }
+      try {
+        const client = makeRzClient(config)
+        const user = await client.ensureAuthenticated()
+        persistRzSession(config, client, user.name)
+        const projects = await client.listProjects()
+        return { ok: true, projects: projects.map(summarizeRzProject) }
+      } catch (err) {
+        return {
+          ok: false,
+          projects: [],
+          error: err instanceof Error ? err.message : String(err),
+        }
+      }
+    },
+  )
+
+  ipcMain.handle(WORKSPACE_CHANNELS.rzWorkspaces, (): WorkspaceSummary[] =>
+    listRzWorkspaceSummaries(),
+  )
+
+  ipcMain.handle(
+    WORKSPACE_CHANNELS.rzSync,
+    async (_event, rawProjectId: unknown, rawMode: unknown): Promise<RzSyncOutcome> => {
+      const mode = rawMode === 'current' ? 'current' : 'new'
+      const projectId = typeof rawProjectId === 'string' ? rawProjectId : String(rawProjectId ?? '')
+      const config = resolveRzConfig()
+      if (!config.baseUrl) {
+        return {
+          ok: false,
+          mode,
+          downloaded: 0,
+          skipped: 0,
+          failed: 0,
+          warnings: [],
+          error: 'rz-system 未配置',
+        }
+      }
+      try {
+        const client = makeRzClient(config)
+        const user = await client.ensureAuthenticated()
+        persistRzSession(config, client, user.name)
+        const projects = await client.listProjects()
+        const project = projects.find((p) => p.id === projectId)
+        if (!project) throw new Error(`rz-system 中找不到项目 ${projectId}`)
+
+        let dir: string
+        if (mode === 'current') {
+          const current = readLastWorkspaceDir()
+          if (!current) throw new Error('当前没有打开的工作空间')
+          dir = current
+        } else {
+          const parent = defaultSaveDir()
+          mkdirSync(parent, { recursive: true })
+          dir = uniqueWorkspaceDir(parent, workspaceDirNameForProject(project))
+          mkdirSync(dir, { recursive: true })
+        }
+
+        const result = await syncRzProjectsToWorkspace({
+          workspaceDir: dir,
+          client,
+          projects: [project],
+          filesBaseUrl: config.filesUrl,
+        })
+        writeLastWorkspaceDir(dir)
+        const extras = withExtraRoot(extraFolderRoots(), defaultSaveDir(), dir)
+        if (extras) {
+          writeAppSetting(APP_SETTINGS_PATH(), FOLDER_ROOTS_KEY, extras)
+          ensureFolderWatchers()
+          fileIndexer?.refresh()
+        }
+        const workspace = summarizeWorkspace(dir) ?? undefined
+        return {
+          ok: true,
+          mode,
+          ...(workspace ? { workspace } : {}),
+          downloaded: result.downloaded,
+          skipped: result.skipped,
+          failed: result.failed,
+          warnings: result.warnings,
+        }
+      } catch (err) {
+        return {
+          ok: false,
+          mode,
+          downloaded: 0,
+          skipped: 0,
+          failed: 0,
+          warnings: [],
+          error: err instanceof Error ? err.message : String(err),
+        }
+      }
+    },
+  )
+
+  // ── Handoff packages (project-scoped, immutable) ─────────────────────────────
+  function requireRzFilesUrl(): string {
+    const filesUrl = resolveRzConfig().filesUrl
+    if (!filesUrl) throw new Error('请先在设置 → 账户中填写附件服务器地址')
+    return filesUrl
+  }
+
+  function handoffAuth(): { user: string; password: string } | undefined {
+    const user = rzEnv('GENOFFICE_SYNC_USER')
+    if (!user) return undefined
+    return { user, password: rzEnv('GENOFFICE_SYNC_PASSWORD') ?? '' }
+  }
+
+  function handoffAuthor(): { name: string; email?: string } {
+    const config = resolveRzConfig()
+    const name = config.name?.trim() || config.email?.split('@')[0]?.trim()
+    if (!name) throw new Error('请先在设置中连接 rz-system')
+    return { name, ...(config.email ? { email: config.email } : {}) }
+  }
+
+  function requireHandoffWorkspace(raw: unknown): string {
+    const dir = typeof raw === 'string' ? resolve(raw) : ''
+    if (!dir) throw new Error('缺少工作空间目录')
+    const known = listRzWorkspaceSummaries().some((workspace) => resolve(workspace.dir) === dir)
+    if (!known) throw new Error('工作空间不可用，请先同步 rz-system 项目')
+    return dir
+  }
+
+  ipcMain.handle(
+    WORKSPACE_CHANNELS.handoffList,
+    async (
+      _event,
+      rawProjectId: unknown,
+    ): Promise<{ ok: boolean; handoffs: HandoffSummary[]; error?: string }> => {
+      const projectId = typeof rawProjectId === 'string' ? rawProjectId.trim() : ''
+      if (!projectId) return { ok: false, handoffs: [], error: '缺少项目 ID' }
+      try {
+        const handoffs = await listHandoffs({
+          filesBaseUrl: requireRzFilesUrl(),
+          projectId,
+          auth: handoffAuth(),
+        })
+        return { ok: true, handoffs }
+      } catch (err) {
+        return {
+          ok: false,
+          handoffs: [],
+          error: err instanceof Error ? err.message : String(err),
+        }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    WORKSPACE_CHANNELS.handoffPublish,
+    async (_event, rawDir: unknown, rawNote: unknown): Promise<HandoffPublishResult> => {
+      try {
+        const dir = requireHandoffWorkspace(rawDir)
+        const author = handoffAuthor()
+        const note = typeof rawNote === 'string' ? rawNote.slice(0, 500) : undefined
+        return await publishHandoff({
+          workspaceDir: dir,
+          filesBaseUrl: requireRzFilesUrl(),
+          authorName: author.name,
+          ...(author.email ? { authorEmail: author.email } : {}),
+          ...(note ? { note } : {}),
+          auth: handoffAuth(),
+        })
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    WORKSPACE_CHANNELS.handoffDownload,
+    async (
+      _event,
+      rawDir: unknown,
+      rawProjectId: unknown,
+      rawHandoffId: unknown,
+    ): Promise<HandoffDownloadResult> => {
+      try {
+        const dir = requireHandoffWorkspace(rawDir)
+        const projectId = typeof rawProjectId === 'string' ? rawProjectId.trim() : ''
+        const handoffId = typeof rawHandoffId === 'string' ? rawHandoffId.trim() : ''
+        if (!projectId || !handoffId) throw new Error('缺少项目或交接标识')
+        return await downloadHandoff({
+          workspaceDir: dir,
+          filesBaseUrl: requireRzFilesUrl(),
+          projectId,
+          handoffId,
+          auth: handoffAuth(),
+        })
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    WORKSPACE_CHANNELS.handoffApply,
+    async (
+      _event,
+      rawDir: unknown,
+      rawHandoffId: unknown,
+      rawPaths: unknown,
+    ): Promise<HandoffApplyResult> => {
+      try {
+        const dir = requireHandoffWorkspace(rawDir)
+        const handoffId = typeof rawHandoffId === 'string' ? rawHandoffId.trim() : ''
+        const paths = Array.isArray(rawPaths)
+          ? rawPaths.filter((path): path is string => typeof path === 'string')
+          : []
+        if (!handoffId) throw new Error('缺少交接标识')
+        if (paths.length === 0) return { ok: true, applied: 0 }
+        return applyHandoff({ workspaceDir: dir, handoffId, paths })
+      } catch (err) {
+        return { ok: false, applied: 0, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
+
+  ipcMain.handle(WORKSPACE_CHANNELS.openUrl, async (_event, rawUrl: unknown): Promise<boolean> => {
+    if (typeof rawUrl !== 'string') return false
     try {
-      const res = await applySelectedFromMirror({ workspaceDir: dir, paths: list })
-      return res
-    } catch (err) {
-      return { ok: false, applied: 0, error: err instanceof Error ? err.message : String(err) }
+      const url = new URL(rawUrl)
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return false
+      await shell.openExternal(url.toString())
+      return true
+    } catch {
+      return false
     }
   })
+
+  ipcMain.handle(
+    WORKSPACE_CHANNELS.publish,
+    async (): Promise<{
+      ok: boolean
+      version?: string
+      error?: string
+    }> => {
+      const dir = readLastWorkspaceDir()
+      if (!dir) return { ok: false, error: 'No workspace selected' }
+      const baseUrl = process.env.GENOFFICE_SYNC_BASE_URL
+      if (typeof baseUrl !== 'string' || !baseUrl.trim())
+        return { ok: false, error: 'GENOFFICE_SYNC_BASE_URL is not set' }
+      try {
+        const auth =
+          typeof process.env.GENOFFICE_SYNC_USER === 'string' && process.env.GENOFFICE_SYNC_USER
+            ? {
+                user: process.env.GENOFFICE_SYNC_USER,
+                password: process.env.GENOFFICE_SYNC_PASSWORD ?? '',
+              }
+            : undefined
+        const res = await publishSnapshotToDufs({ workspaceDir: dir, baseUrl, auth })
+        return res
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    WORKSPACE_CHANNELS.pull,
+    async (): Promise<{
+      ok: boolean
+      version?: string
+      mirrorDir?: string
+      diff?: Array<{ kind: 'new' | 'changed' | 'unchanged' | 'deleted'; path: string }>
+      error?: string
+    }> => {
+      const dir = readLastWorkspaceDir()
+      if (!dir) return { ok: false, error: 'No workspace selected' }
+      const baseUrl = process.env.GENOFFICE_SYNC_BASE_URL
+      if (typeof baseUrl !== 'string' || !baseUrl.trim())
+        return { ok: false, error: 'GENOFFICE_SYNC_BASE_URL is not set' }
+      try {
+        const auth =
+          typeof process.env.GENOFFICE_SYNC_USER === 'string' && process.env.GENOFFICE_SYNC_USER
+            ? {
+                user: process.env.GENOFFICE_SYNC_USER,
+                password: process.env.GENOFFICE_SYNC_PASSWORD ?? '',
+              }
+            : undefined
+        const res = await pullLatestSnapshotFromDufs({ workspaceDir: dir, baseUrl, auth })
+        // keep only minimal diff shape for the renderer
+        return {
+          ok: res.ok,
+          version: res.version,
+          mirrorDir: res.mirrorDir,
+          diff: (res.diff ?? []).map((d) => ({ kind: d.kind, path: d.path })),
+          ...(res.error ? { error: res.error } : {}),
+        }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    WORKSPACE_CHANNELS.apply,
+    async (
+      _event,
+      paths: unknown,
+    ): Promise<{
+      ok: boolean
+      applied: number
+      error?: string
+    }> => {
+      const dir = readLastWorkspaceDir()
+      if (!dir) return { ok: false, applied: 0, error: 'No workspace selected' }
+      const list = Array.isArray(paths)
+        ? (paths.filter((p) => typeof p === 'string') as string[])
+        : []
+      if (list.length === 0) return { ok: false, applied: 0, error: 'No files selected' }
+      try {
+        const res = await applySelectedFromMirror({ workspaceDir: dir, paths: list })
+        return res
+      } catch (err) {
+        return { ok: false, applied: 0, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
 
   ipcMain.handle(HOME_CHANNELS.openGenTeam, () => {
     shell.openExternal(GENTEAM_URL).catch(() => {
@@ -6131,26 +6679,6 @@ function registerTabsIpc(): void {
         icon: menuIcons().xlsx,
         click: () => void newSheetTab(),
       },
-      {
-        label: tm('menuNewSlide'),
-        icon: menuIcons().pptx,
-        click: () => newSlideTab(),
-      },
-      {
-        label: tm('menuNewMarkdown'),
-        icon: menuIcons().md,
-        click: () => newMarkdownTab(),
-      },
-      {
-        label: tm('menuNewHtml'),
-        icon: menuIcons().html,
-        click: () => newHtmlTab(),
-      },
-      {
-        label: tm('menuNewPdf'),
-        icon: menuIcons().pdf,
-        click: () => void newPdfTab(),
-      },
       { type: 'separator' },
       { label: tm('menuOpen'), click: () => void openFileViaDialog() },
     ])
@@ -6198,10 +6726,6 @@ function buildHomeMenu(): void {
           label: tm('menuNewSheet'),
           click: () => void newSheetTab(),
         },
-        { label: tm('menuNewSlide'), click: () => newSlideTab() },
-        { label: tm('menuNewMarkdown'), click: () => newMarkdownTab() },
-        { label: tm('menuNewHtml'), click: () => newHtmlTab() },
-        { label: tm('menuNewPdf'), click: () => void newPdfTab() },
         { type: 'separator' },
         {
           label: tm('menuOpen'),
@@ -7041,9 +7565,6 @@ function installDockMenu(): void {
         label: tm('menuNewSheet'),
         click: () => void newSheetTab(),
       },
-      { label: tm('menuNewSlide'), click: () => newSlideTab() },
-      { label: tm('menuNewMarkdown'), click: () => newMarkdownTab() },
-      { label: tm('menuNewPdf'), click: () => void newPdfTab() },
     ]),
   )
 }

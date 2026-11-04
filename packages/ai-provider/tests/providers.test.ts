@@ -14,17 +14,39 @@ import {
 import type { AiProviderId } from '../src/types'
 
 describe('defaultAiSettings', () => {
-  it('gives every provider its default model and an empty key by default', () => {
+  it('gives every provider its default model and shipped key', () => {
     const settings = defaultAiSettings()
-    expect(settings.provider).toBe('genspark')
+    expect(settings.provider).toBe('rz-vllm')
     for (const meta of AI_PROVIDERS) {
-      expect(settings.providers[meta.id].apiKey).toBe('')
+      expect(settings.providers[meta.id].apiKey).toBe(meta.defaultApiKey ?? '')
       expect(settings.providers[meta.id].model).toBe(meta.defaultModel)
     }
     expect(settings.providers.custom.baseUrl).toBe('')
     expect(settings.providers.codex.cliPath).toBe('')
     expect(settings.providers.codex.model).toBe('')
     expect(settings.providers.anthropic.baseUrl).toBeUndefined()
+  })
+
+  it('ships the internal rz-vllm endpoint and key as defaults', () => {
+    const settings = defaultAiSettings()
+    expect(settings.providers['rz-vllm']).toMatchObject({
+      apiKey: '123456',
+      baseUrl: 'http://192.168.2.70:9000/v1',
+    })
+  })
+
+  it('hides Genspark and the uncommon gateways from provider lists', () => {
+    expect(AI_PROVIDERS.filter((meta) => meta.hidden).map((meta) => meta.id)).toEqual([
+      'genspark',
+      'requesty',
+      'opper',
+      'cheaperinference',
+      'atlascloud',
+      'runcrate',
+      'cloudgpu',
+      'opencode-zen',
+      'opencode-go',
+    ])
   })
 
   it('applies caller-supplied default keys only to the listed providers', () => {
@@ -172,7 +194,7 @@ describe('resolveAiSettings', () => {
         defaults,
       )
       expect(resolved.providers.anthropic).toEqual(defaults.providers.anthropic)
-      expect(activeProvider(resolved)).toBe('genspark')
+      expect(activeProvider(resolved)).toBe('rz-vllm')
     }
   })
 
@@ -376,12 +398,12 @@ describe('clampMaxOutputTokens', () => {
 })
 
 describe('activeProvider', () => {
-  it('honors a configured BYOK provider and falls back to genspark otherwise', () => {
+  it('honors a configured BYOK provider and falls back to the internal default otherwise', () => {
     const settings = defaultAiSettings()
-    expect(activeProvider(settings)).toBe('genspark')
+    expect(activeProvider(settings)).toBe('rz-vllm')
 
     settings.provider = 'kimi'
-    expect(activeProvider(settings)).toBe('genspark') // no key yet
+    expect(activeProvider(settings)).toBe('rz-vllm') // no key yet
     settings.providers.kimi.apiKey = 'sk-user'
     expect(activeProvider(settings)).toBe('kimi')
   })
@@ -390,9 +412,9 @@ describe('activeProvider', () => {
     const settings = defaultAiSettings()
     settings.provider = 'custom'
     settings.providers.custom.apiKey = 'k'
-    expect(activeProvider(settings)).toBe('genspark')
+    expect(activeProvider(settings)).toBe('rz-vllm')
     settings.providers.custom.baseUrl = 'http://localhost:1234/v1'
-    expect(activeProvider(settings)).toBe('genspark') // custom's default model is empty
+    expect(activeProvider(settings)).toBe('rz-vllm') // custom's default model is empty
     settings.providers.custom.model = 'my-model'
     expect(activeProvider(settings)).toBe('custom')
   })
@@ -425,10 +447,10 @@ describe('activeProvider', () => {
     const settings = defaultAiSettings()
     settings.provider = 'kimi'
     settings.providers.kimi.apiKey = '   '
-    expect(activeProvider(settings)).toBe('genspark')
+    expect(activeProvider(settings)).toBe('rz-vllm')
     settings.providers.kimi.apiKey = 'sk-user'
     settings.providers.kimi.model = '  '
-    expect(activeProvider(settings)).toBe('genspark')
+    expect(activeProvider(settings)).toBe('rz-vllm')
     settings.providers.kimi.model = 'kimi-k2'
     expect(activeProvider(settings)).toBe('kimi')
 
@@ -436,19 +458,19 @@ describe('activeProvider', () => {
     custom.provider = 'custom'
     custom.providers.custom.baseUrl = '   '
     custom.providers.custom.model = 'my-model'
-    expect(activeProvider(custom)).toBe('genspark')
+    expect(activeProvider(custom)).toBe('rz-vllm')
   })
 
-  it('falls back to genspark for unknown ids from a hand-edited settings file', () => {
+  it('falls back to the internal default for unknown ids from a hand-edited settings file', () => {
     const settings = defaultAiSettings()
     settings.provider = 'nonsense' as AiProviderId
-    expect(activeProvider(settings)).toBe('genspark')
+    expect(activeProvider(settings)).toBe('rz-vllm')
   })
 
-  it('genspark never requires a key (injected from the gsk login at request time)', () => {
+  it('treats hidden providers as unlisted and falls back to the internal default', () => {
     const settings = defaultAiSettings()
     settings.provider = 'genspark'
-    expect(activeProvider(settings)).toBe('genspark')
+    expect(activeProvider(settings)).toBe('rz-vllm')
   })
 })
 

@@ -8,18 +8,30 @@ import {
 
 const anthropicModels = AI_PROVIDERS.find((m) => m.id === 'anthropic')!.models
 
+const rzVllmLabel = AI_PROVIDERS.find((m) => m.id === 'rz-vllm')!.label
+const rzVllmModel = AI_PROVIDERS.find((m) => m.id === 'rz-vllm')!.defaultModel
+
+/** A fresh install always ships RZ vLLM; clear it when a test needs an empty catalog. */
+function withoutRzVllm(): ReturnType<typeof defaultAiSettings> {
+  const settings = defaultAiSettings()
+  settings.providers['rz-vllm'] = { apiKey: '', model: '', baseUrl: '' }
+  return settings
+}
+
 describe('aiModelPickerGroups', () => {
-  it('lists nothing while signed out with no keys', () => {
-    expect(aiModelPickerGroups(defaultAiSettings(), false)).toEqual([])
+  it('lists the shipped RZ vLLM default while signed out with no keys', () => {
+    expect(aiModelPickerGroups(defaultAiSettings(), false)).toEqual([
+      { id: 'rz-vllm', label: rzVllmLabel, models: [rzVllmModel] },
+    ])
   })
 
-  it('lists Genspark only when signed in', () => {
+  it('keeps Genspark hidden even when signed in', () => {
     const ids = aiModelPickerGroups(defaultAiSettings(), true).map((g) => g.id)
-    expect(ids).toEqual(['genspark'])
+    expect(ids).toEqual(['rz-vllm'])
   })
 
   it('adds a vendor once its key is set and puts an off-catalog model first', () => {
-    const settings = defaultAiSettings()
+    const settings = withoutRzVllm()
     settings.providers.anthropic = { apiKey: 'k', model: 'claude-next' }
     const groups = aiModelPickerGroups(settings, false)
     expect(groups.map((g) => g.id)).toEqual(['anthropic'])
@@ -27,7 +39,7 @@ describe('aiModelPickerGroups', () => {
   })
 
   it('needs a base URL for custom endpoints', () => {
-    const settings = defaultAiSettings()
+    const settings = withoutRzVllm()
     settings.providers.custom = { apiKey: '', model: 'llama', baseUrl: '' }
     expect(aiModelPickerGroups(settings, false)).toEqual([])
     settings.providers.custom = { apiKey: '', model: 'llama', baseUrl: 'http://localhost:11434/v1' }
@@ -52,16 +64,16 @@ describe('selection round trip', () => {
     expect(settings.providers.anthropic.model).toBe(anthropicModels[0])
   })
 
-  it('falls back to Genspark when the stored provider is unusable', () => {
+  it('falls back to RZ vLLM when the stored provider is unusable', () => {
     const settings = defaultAiSettings()
     settings.provider = 'anthropic'
-    expect(aiModelPickerSelection(settings).provider).toBe('genspark')
+    expect(aiModelPickerSelection(settings).provider).toBe('rz-vllm')
   })
 })
 
 describe('CLI vendors', () => {
   it('lists Codex only after the settings page stored a path or model', () => {
-    const settings = defaultAiSettings()
+    const settings = withoutRzVllm()
     expect(aiModelPickerGroups(settings, false)).toEqual([])
     settings.providers.codex = { apiKey: '', model: '', cliPath: '/usr/local/bin/codex' }
     expect(aiModelPickerGroups(settings, false)).toEqual([
@@ -72,7 +84,7 @@ describe('CLI vendors', () => {
 
 describe('custom endpoints', () => {
   const settings = () => ({
-    ...defaultAiSettings(),
+    ...withoutRzVllm(),
     customEndpoints: [
       {
         id: 'a',
